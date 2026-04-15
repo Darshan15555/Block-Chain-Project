@@ -2,6 +2,14 @@ import axios from 'axios';
 
 const TOKEN_KEY = 'blockfund_jwt';
 
+function normalizeApiBaseUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '/api';
+  return raw.replace(/\/+$/, '');
+}
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
+
 function canUseStorage() {
   return typeof window !== 'undefined' && !!window.localStorage;
 }
@@ -21,7 +29,7 @@ export function setAuthToken(token) {
 }
 
 const API = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL,
   timeout: 15000,
 });
 
@@ -102,6 +110,10 @@ export const api = {
   getBlockchainStatus: () => API.get('/blockchain/status'),
   getBlockchainAudit: () => API.get('/blockchain/audit'),
 };
+
+export function getResolvedApiBaseUrl() {
+  return API_BASE_URL;
+}
 
 export function formatINR(amount) {
   if (!amount && amount !== 0) return '-';

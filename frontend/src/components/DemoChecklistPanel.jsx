@@ -32,6 +32,7 @@ export default function DemoChecklistPanel({ currentUser, activePage, showToast,
   const [resetting, setResetting] = useState(false);
   const [resettingChecklist, setResettingChecklist] = useState(false);
   const [readiness, setReadiness] = useState(null);
+  const [serviceStatus, setServiceStatus] = useState({ unavailable: false, message: '' });
 
   const canReset = currentUser?.role === 'authority';
 
@@ -49,15 +50,22 @@ export default function DemoChecklistPanel({ currentUser, activePage, showToast,
     if (readinessRes?.data?.readiness) {
       setReadiness(readinessRes.data.readiness);
     }
+    setServiceStatus({ unavailable: false, message: '' });
   };
 
   useEffect(() => {
     if (!canReset) {
       setReadiness(null);
     }
-    fetchProgress().catch(() => {});
+    fetchProgress().catch((error) => {
+      const message = error?.response?.data?.error || 'Demo services unavailable';
+      setServiceStatus({ unavailable: true, message });
+    });
     const timer = setInterval(() => {
-      fetchProgress().catch(() => {});
+      fetchProgress().catch((error) => {
+        const message = error?.response?.data?.error || 'Demo services unavailable';
+        setServiceStatus({ unavailable: true, message });
+      });
     }, 6000);
     return () => clearInterval(timer);
   }, [activePage, canReset]);
@@ -170,6 +178,11 @@ export default function DemoChecklistPanel({ currentUser, activePage, showToast,
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 10 }}>
             Remaining steps: {remainingCount}
           </div>
+          {serviceStatus.unavailable && (
+            <div style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 10, lineHeight: 1.5 }}>
+              Service fallback active: {serviceStatus.message}. Checklist sync will resume automatically once API is back.
+            </div>
+          )}
           {canReset && readiness && (
             <div style={{ fontSize: 11, marginBottom: 10, color: readiness.blockers?.length ? 'var(--orange)' : 'var(--green)' }}>
               Readiness blockers: {readiness.blockers?.length || 0}

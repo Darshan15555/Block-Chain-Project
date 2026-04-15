@@ -154,6 +154,9 @@ export default function ContractorDashboard({ showToast, currentUser }) {
           <div style={{ marginBottom: 10, fontSize: 11, color: 'var(--text-secondary)' }}>
             Assigned Contractor: <span style={{ color: 'var(--accent)' }}>{currentUser?.name || '-'}</span>
           </div>
+          <div style={{ marginBottom: 10, fontSize: 10, color: 'var(--text-muted)' }}>
+            Contractor-raised requests move to Accepted and wait for authority release.
+          </div>
           <form onSubmit={handleRaiseRequest}>
             <div className="form-group">
               <label className="form-label">Project</label>

@@ -146,8 +146,8 @@ export default function AuthorityDashboard({ showToast }) {
           tone="accent"
           steps={[
             'Create a project and assign a contractor.',
-            'Send funding request for the selected project.',
-            'Contractor accepts the request from their dashboard.',
+            'Send funding request or wait for contractor-raised request.',
+            'Ensure request status is Accepted.',
             'Release funds only after request becomes accepted.',
           ]}
         />
@@ -302,7 +302,7 @@ export default function AuthorityDashboard({ showToast }) {
       <div className="section-header">
         <div>
           <div className="section-title">Recent Funding Requests</div>
-          <div className="section-subtitle">Release is enabled only after contractor acceptance</div>
+          <div className="section-subtitle">Release is enabled only after request status becomes Accepted</div>
         </div>
       </div>
       <div className="filter-row">

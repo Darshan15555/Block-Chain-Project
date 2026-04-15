@@ -188,7 +188,7 @@ export default function SubmitUpdate({ showToast }) {
                   color: 'var(--text-secondary)',
                 }}
               >
-                No usable released balance yet. Go to Contractor Dashboard and raise a fund request.
+                No usable released balance yet. Raise or confirm a funding request, then wait for authority release.
               </div>
             )}
             {selected && inputAmount > 0 && releasedUnspent > 0 && (

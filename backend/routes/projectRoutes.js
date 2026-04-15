@@ -919,13 +919,6 @@ router.post('/contract-requests/:requestId/release', requireRoles('authority'), 
       });
     }
 
-    if (!isAuthorityInitiatedRequest(requestItem)) {
-      return res.status(409).json({
-        success: false,
-        error: 'Only authority-initiated accepted requests can be released',
-      });
-    }
-
     const project = await Project.findOne({ projectId: requestItem.projectId });
     if (!project) {
       return res.status(404).json({ success: false, error: 'Project not found for this request' });
