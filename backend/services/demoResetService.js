@@ -71,30 +71,38 @@ async function resetDemoData() {
     {
       name: 'Central Authority',
       username: 'authority_admin',
+      email: 'authority@blockfund.gov',
       password: 'Authority@123',
       role: 'authority',
       walletAddress: process.env.AUTHORITY_ADDRESS || accounts[0],
+      companyName: '',
     },
     {
       name: 'Contractor1',
       username: 'contractor1',
+      email: 'contractor1@apexinfra.com',
       password: 'Contractor@123',
       role: 'contractor',
       walletAddress: accounts[1],
+      companyName: 'Apex Infrastructure Ltd',
     },
     {
       name: 'Contractor2',
       username: 'contractor2',
+      email: 'contractor2@buildcraft.com',
       password: 'Contractor@123',
       role: 'contractor',
       walletAddress: accounts[2],
+      companyName: 'BuildCraft Solutions',
     },
     {
       name: 'PublicUser',
       username: 'public_user',
+      email: 'citizen@public.org',
       password: 'Public@123',
       role: 'public',
       walletAddress: null,
+      companyName: '',
     },
   ];
 
@@ -104,6 +112,8 @@ async function resetDemoData() {
     const created = await User.create({
       name: user.name,
       username: user.username,
+      email: user.email,
+      companyName: user.companyName,
       passwordHash,
       role: user.role,
       walletAddress: user.walletAddress,

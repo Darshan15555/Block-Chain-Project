@@ -1,17 +1,12 @@
 import { useState, useEffect } from 'react';
 import { api, formatINR, formatDate, getPercent } from '../utils/api';
-import TxHashDisplay from '../components/TxHashDisplay.jsx';
+import StatCard from '../components/ui/StatCard';
+import StatusBadge from '../components/ui/StatusBadge';
+import LoadingSkeleton from '../components/ui/LoadingSkeleton';
+import EmptyState from '../components/ui/EmptyState';
 import LastUpdatedLabel from '../components/LastUpdatedLabel.jsx';
 
-function requestStatusLabel(status) {
-  if (status === 'pending') return 'Pending';
-  if (status === 'accepted') return 'Accepted';
-  if (status === 'released') return 'Released';
-  if (status === 'rejected') return 'Rejected';
-  return status;
-}
-
-export default function ContractorDashboard({ showToast, currentUser }) {
+export default function ContractorDashboard({ showToast, currentUser, onNavigate }) {
   const [projects, setProjects] = useState([]);
   const [requests, setRequests] = useState([]);
   const [stats, setStats] = useState(null);
@@ -32,9 +27,9 @@ export default function ContractorDashboard({ showToast, currentUser }) {
       api.getStats(),
     ]);
 
-    setProjects(projectsRes.data.projects || []);
-    setRequests(requestsRes.data.requests || []);
-    setStats(statsRes.data.stats || null);
+    setProjects(projectsRes.data?.projects || []);
+    setRequests(requestsRes.data?.requests || []);
+    setStats(statsRes.data?.stats || null);
     setLastUpdated(new Date());
   };
 
@@ -54,7 +49,7 @@ export default function ContractorDashboard({ showToast, currentUser }) {
     setResponding(`${requestId}:${action}`);
     try {
       const response = await api.respondContractRequest(requestId, { action });
-      showToast(response.data.message || `Request ${action}ed`, 'success');
+      showToast(response.data?.message || `Request ${action}ed successfully`, 'success');
       await loadDashboard();
     } catch (error) {
       showToast(error.response?.data?.error || 'Failed to process request', 'error');
@@ -66,7 +61,13 @@ export default function ContractorDashboard({ showToast, currentUser }) {
   const handleRaiseRequest = async (event) => {
     event.preventDefault();
     if (!requestForm.projectId || !requestForm.amount) {
-      showToast('Select project and amount to request', 'error');
+      showToast('Select a project and specify the required milestone amount', 'error');
+      return;
+    }
+
+    const numAmt = Number(requestForm.amount);
+    if (!numAmt || numAmt <= 0) {
+      showToast('Amount must be greater than zero', 'error');
       return;
     }
 
@@ -74,238 +75,310 @@ export default function ContractorDashboard({ showToast, currentUser }) {
     try {
       const res = await api.raiseContractorFundRequest({
         projectId: requestForm.projectId,
-        amount: Number(requestForm.amount),
+        amount: numAmt,
         note: requestForm.note,
       });
-      showToast(res.data.message || 'Request raised to authority', 'success');
+      showToast(res.data?.message || 'Milestone request submitted to Central Authority', 'success');
       setRequestForm({ projectId: '', amount: '', note: '' });
       await loadDashboard();
     } catch (error) {
-      showToast(error.response?.data?.error || 'Failed to raise request', 'error');
+      showToast(error.response?.data?.error || 'Failed to submit milestone request', 'error');
     } finally {
       setRaisingRequest(false);
     }
   };
 
-  if (loading) return <div className="spinner" />;
+  if (loading) {
+    return (
+      <div className="bf-page-stack">
+        <LoadingSkeleton type="metric" count={4} />
+        <LoadingSkeleton type="card" count={2} height={200} />
+      </div>
+    );
+  }
 
-  const roleStats = stats?.roleStats || {};
   const totalAssigned = projects.length;
-  const totalValue = projects.reduce((acc, project) => acc + Number(project.totalFund || 0), 0);
-  const totalSpent = projects.reduce((acc, project) => acc + Number(project.spentFund || 0), 0);
-  const pendingRequests = requests.filter((request) => request.status === 'pending');
-  const authorityRequests = requests.filter(
-    (request) => !request.initiatedBy || request.initiatedBy === 'authority'
-  );
-  const authorityPending = authorityRequests.filter((request) => request.status === 'pending');
-  const recentAuthorityRequests = authorityRequests.slice(0, 8);
+  const totalValue = projects.reduce((acc, p) => acc + Number(p.totalFund || 0), 0);
+  const totalReleased = projects.reduce((acc, p) => acc + Number(p.releasedFund || 0), 0);
+  const totalSpent = projects.reduce((acc, p) => acc + Number(p.spentFund || 0), 0);
+  const availableLiquidity = Math.max(0, totalReleased - totalSpent);
 
-  const selectedProject = projects.find((project) => project.projectId === requestForm.projectId);
+  // Incoming requests from Authority awaiting contractor acceptance
+  const authorityPending = requests.filter(
+    (r) => r.status === 'pending' && (!r.initiatedBy || r.initiatedBy === 'authority')
+  );
 
   return (
-    <div>
-      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-bright)', borderRadius: 'var(--radius)', padding: '20px 24px', marginBottom: 24, display: 'flex', alignItems: 'center', gap: 16 }}>
-        <div style={{ width: 48, height: 48, background: 'var(--orange-glow)', border: '1px solid var(--orange)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>C</div>
+    <div className="bf-page-stack">
+      {/* Page Header */}
+      <div className="bf-page-header">
         <div>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18 }}>{currentUser?.name}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            Contractor account | <LastUpdatedLabel value={lastUpdated} />
-          </div>
+          <h1 className="bf-page-title">Contractor Operations Command</h1>
+          <p className="bf-page-subtitle">
+            Manage assigned civil contracts, review funding authorizations, and log cryptographic milestone proof.
+          </p>
         </div>
-      </div>
-
-      <div className="stats-grid">
-        <div className="stat-card orange">
-          <div className="stat-label">Projects Assigned</div>
-          <div className="stat-value">{roleStats.projectsAssigned ?? totalAssigned}</div>
-          <div className="stat-sub">Active contracts</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Funds Requested</div>
-          <div className="stat-value" style={{ fontSize: 20 }}>{formatINR(roleStats.totalFundsRequested)}</div>
-          <div className="stat-sub">Requests raised/received</div>
-        </div>
-        <div className="stat-card green">
-          <div className="stat-label">Funds Received</div>
-          <div className="stat-value" style={{ fontSize: 20 }}>{formatINR(roleStats.totalFundsReceived)}</div>
-          <div className="stat-sub">Released on-chain</div>
-        </div>
-        <div className="stat-card purple">
-          <div className="stat-label">Pending Requests</div>
-          <div className="stat-value">{stats?.pendingFundingRequests ?? pendingRequests.length}</div>
-          <div className="stat-sub">Awaiting your action</div>
-        </div>
-      </div>
-
-      <div
-        className="form-card"
-        style={{ maxWidth: '100%', marginBottom: 20, borderColor: 'rgba(0, 212, 255, 0.25)' }}
-      >
-        <div className="form-title" style={{ fontSize: 15 }}>Request Inbox</div>
-        <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-          Logged in as <span style={{ color: 'var(--accent)' }}>{currentUser?.name}</span> (@{currentUser?.username}).
-          {' '}Pending requests from authority for this account: <span style={{ color: 'var(--orange)' }}>{authorityPending.length}</span>.
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
-        <div className="form-card" style={{ maxWidth: '100%' }}>
-          <div className="form-title" style={{ fontSize: 15 }}>Request Funds (Contractor)</div>
-          <div style={{ marginBottom: 10, fontSize: 11, color: 'var(--text-secondary)' }}>
-            Assigned Contractor: <span style={{ color: 'var(--accent)' }}>{currentUser?.name || '-'}</span>
-          </div>
-          <div style={{ marginBottom: 10, fontSize: 10, color: 'var(--text-muted)' }}>
-            Contractor-raised requests move to Accepted and wait for authority release.
-          </div>
-          <form onSubmit={handleRaiseRequest}>
-            <div className="form-group">
-              <label className="form-label">Project</label>
-              <select
-                className="form-select"
-                value={requestForm.projectId}
-                onChange={(event) => setRequestForm((prev) => ({ ...prev, projectId: event.target.value }))}
-              >
-                <option value="">Select project</option>
-                {projects.map((project) => (
-                  <option key={project.projectId} value={project.projectId}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {selectedProject && (
-              <div style={{ marginBottom: 10, fontSize: 11, color: 'var(--text-secondary)' }}>
-                Assigned Contractor: <span style={{ color: 'var(--accent)' }}>{selectedProject.contractor?.name}</span>
-              </div>
-            )}
-            <div className="form-group">
-              <label className="form-label">Amount (INR)</label>
-              <input
-                className="form-input"
-                type="number"
-                min="1"
-                value={requestForm.amount}
-                onChange={(event) => setRequestForm((prev) => ({ ...prev, amount: event.target.value }))}
-                placeholder="Enter amount"
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Note</label>
-              <textarea
-                className="form-textarea"
-                value={requestForm.note}
-                onChange={(event) => setRequestForm((prev) => ({ ...prev, note: event.target.value }))}
-                placeholder="Purpose of request"
-              />
-            </div>
-            <button className="btn btn-primary" type="submit" disabled={raisingRequest}>
-              {raisingRequest ? 'Submitting...' : 'Request Funds'}
+        <div className="bf-page-header-actions">
+          <LastUpdatedLabel date={lastUpdated} />
+          {onNavigate && (
+            <button
+              type="button"
+              className="bf-primary-btn"
+              onClick={() => onNavigate('update')}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              <span>Submit Work Proof</span>
             </button>
-          </form>
-        </div>
-
-        <div className="form-card" style={{ maxWidth: '100%' }}>
-          <div className="form-title" style={{ fontSize: 15, marginBottom: 8 }}>Funding Request Notifications</div>
-          {recentAuthorityRequests.length === 0 ? (
-            <div style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.7 }}>
-              No authority request found for this account.
-              <br />
-              If authority sent request to another contractor, login with that contractor username.
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {recentAuthorityRequests.map((request) => (
-                <div key={request._id} className="project-card" style={{ padding: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span className={`status-badge status-${
-                      request.status === 'pending' ? 'pending' :
-                        request.status === 'accepted' ? 'active' :
-                          request.status === 'released' ? 'completed' : 'suspended'
-                    }`}>
-                      {requestStatusLabel(request.status)}
-                    </span>
-                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{formatDate(request.createdAt)}</span>
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-primary)', marginBottom: 4 }}>{request.projectName}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                    Amount: {formatINR(request.amount)}
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 8 }}>
-                    Requested by: {request.authorityName || 'Authority'}
-                  </div>
-                  {request.note && (
-                    <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                      Note: {request.note}
-                    </div>
-                  )}
-                  <TxHashDisplay hash={request.blockchainTxHash} />
-                  {request.status === 'pending' && (!request.initiatedBy || request.initiatedBy === 'authority') && (
-                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                      <button
-                        className="btn btn-success btn-sm"
-                        disabled={responding === `${request._id}:accept`}
-                        onClick={() => handleRespond(request._id, 'accept')}
-                      >
-                        {responding === `${request._id}:accept` ? 'Accepting...' : 'Accept'}
-                      </button>
-                      <button
-                        className="btn btn-danger btn-sm"
-                        disabled={responding === `${request._id}:reject`}
-                        onClick={() => handleRespond(request._id, 'reject')}
-                      >
-                        {responding === `${request._id}:reject` ? 'Rejecting...' : 'Reject'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
           )}
         </div>
       </div>
 
-      <div className="section-header">
-        <div className="section-title">My Projects</div>
+      {/* Metrics Row */}
+      <div className="bf-stats-grid">
+        <StatCard
+          title="ASSIGNED CIVIL CONTRACTS"
+          value={totalAssigned}
+          subtitle={`${projects.filter(p => p.status === 'Active').length} Active Construction`}
+          tone="blue"
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="7" width="20" height="14" rx="2" />
+              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+            </svg>
+          }
+        />
+
+        <StatCard
+          title="TOTAL CONTRACT VALUE"
+          value={formatINR(totalValue)}
+          subtitle="Committed in Smart Contract Escrow"
+          tone="purple"
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+            </svg>
+          }
+        />
+
+        <StatCard
+          title="AVAILABLE UNSPENT LIQUIDITY"
+          value={formatINR(availableLiquidity)}
+          subtitle="Disbursed & Ready for Expenses"
+          tone="emerald"
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+          }
+        />
+
+        <StatCard
+          title="PENDING AUTHORIZATIONS"
+          value={authorityPending.length}
+          subtitle={authorityPending.length > 0 ? 'Requires your acceptance' : 'All authorizations accepted'}
+          tone={authorityPending.length > 0 ? 'amber' : 'slate'}
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+          }
+        />
       </div>
 
-      {projects.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-title">No projects assigned</div>
-          <div className="empty-desc">Contact the authority to get projects assigned.</div>
-        </div>
-      ) : (
-        <div className="projects-grid">
-          {projects.map((project) => {
-            const percent = getPercent(project.spentFund, project.totalFund);
-            return (
-              <div key={project.projectId} className="project-card">
-                <div className="project-card-header">
-                  <span className={`project-type-badge type-${project.type?.toLowerCase().replace(' ', '')}`}>{project.type}</span>
-                  <span className={`status-badge status-${project.status?.toLowerCase()}`}>{project.status}</span>
+      {/* Actionable Incoming Authorizations Banner */}
+      {authorityPending.length > 0 && (
+        <div className="bf-card bf-pending-action-card">
+          <div className="bf-card-header-bar">
+            <div>
+              <span className="bf-badge-pulse" style={{ position: 'static', display: 'inline-block' }} />
+              <h2 className="bf-card-title" style={{ display: 'inline', marginLeft: 8 }}>
+                Incoming Fund Authorizations from Central Authority ({authorityPending.length})
+              </h2>
+              <p className="bf-card-sub">
+                Accept these authorizations to allow the Authority to trigger on-chain smart contract disbursements to your wallet.
+              </p>
+            </div>
+          </div>
+
+          <div className="bf-request-cards-grid">
+            {authorityPending.map((r) => (
+              <div key={r._id} className="bf-actionable-req-card">
+                <div className="bf-req-card-top">
+                  <span className="bf-req-project-name">{r.projectName || r.projectId}</span>
+                  <span className="bf-req-amount">{formatINR(r.amount)}</span>
                 </div>
-                <div className="project-name">{project.name}</div>
-                <div className="project-location">{project.location}</div>
-                <div className="fund-bar-container">
-                  <div className="fund-bar-label">
-                    <span>Spent: {formatINR(project.spentFund)}</span>
-                    <span>{percent}%</span>
-                  </div>
-                  <div className="fund-bar-track">
-                    <div className={`fund-bar-fill ${percent > 80 ? 'danger' : ''}`} style={{ width: `${percent}%` }} />
-                  </div>
-                  <div className="fund-bar-label" style={{ marginTop: 4 }}>
-                    <span>Total: {formatINR(project.totalFund)}</span>
-                    <span>Remaining: {formatINR(project.totalFund - project.spentFund)}</span>
-                  </div>
-                </div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8 }}>
-                  Contract value: {formatINR(totalValue)} | Utilized: {formatINR(totalSpent)}
+
+                {r.note && (
+                  <p className="bf-req-note">
+                    <strong>Milestone Note:</strong> {r.note}
+                  </p>
+                )}
+
+                <div className="bf-req-card-actions">
+                  <button
+                    type="button"
+                    className="bf-primary-btn bf-btn-sm"
+                    onClick={() => handleRespond(r._id, 'accept')}
+                    disabled={!!responding}
+                  >
+                    <span>{responding === `${r._id}:accept` ? 'Accepting...' : 'Accept Authorization'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="bf-secondary-btn bf-btn-sm bf-btn-danger"
+                    onClick={() => handleRespond(r._id, 'reject')}
+                    disabled={!!responding}
+                  >
+                    <span>Reject</span>
+                  </button>
                 </div>
               </div>
-            );
-          })}
+            ))}
+          </div>
         </div>
       )}
+
+      {/* Two Column Layout: Assigned Projects + Raise Milestone Request */}
+      <div className="bf-dashboard-grid">
+        {/* Left: Assigned Projects Overview */}
+        <div className="bf-card">
+          <div className="bf-card-header-bar">
+            <div>
+              <h2 className="bf-card-title">Assigned Civil Projects</h2>
+              <p className="bf-card-sub">Active site allocations and current budget status</p>
+            </div>
+            {onNavigate && (
+              <button
+                type="button"
+                className="bf-secondary-btn bf-btn-sm"
+                onClick={() => onNavigate('myprojects')}
+              >
+                View Full List
+              </button>
+            )}
+          </div>
+
+          {projects.length > 0 ? (
+            <div className="bf-assigned-list">
+              {projects.slice(0, 4).map((p) => {
+                const pct = getPercent(p.spentFund, p.totalFund);
+                return (
+                  <div key={p.projectId} className="bf-assigned-item">
+                    <div className="bf-assigned-header">
+                      <div>
+                        <strong className="bf-assigned-name">{p.name}</strong>
+                        <div className="bf-assigned-loc">📍 {p.location}</div>
+                      </div>
+                      <StatusBadge status={p.status || 'Active'} size="sm" />
+                    </div>
+
+                    <div className="bf-assigned-metrics">
+                      <div>
+                        <span className="bf-metric-mini-lbl">Budget Spent</span>
+                        <span className="bf-metric-mini-val">{formatINR(p.spentFund)}</span>
+                      </div>
+                      <div>
+                        <span className="bf-metric-mini-lbl">Released</span>
+                        <span className="bf-metric-mini-val text-blue">{formatINR(p.releasedFund || 0)}</span>
+                      </div>
+                      <div>
+                        <span className="bf-metric-mini-lbl">Total Budget</span>
+                        <span className="bf-metric-mini-val">{formatINR(p.totalFund)}</span>
+                      </div>
+                    </div>
+
+                    <div className="fund-bar-container">
+                      <div className="fund-bar-label">
+                        <span>Milestone Progress</span>
+                        <span>{pct}%</span>
+                      </div>
+                      <div className="fund-bar-track">
+                        <div className="fund-bar-fill" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState
+              title="No projects assigned"
+              description="Your company currently has no active infrastructure contracts assigned."
+            />
+          )}
+        </div>
+
+        {/* Right: Raise Milestone Fund Request to Authority */}
+        <div className="bf-card">
+          <div className="bf-card-header-bar">
+            <div>
+              <h2 className="bf-card-title">Request Milestone Advance</h2>
+              <p className="bf-card-sub">Submit formal funding claims to Central Authority for upcoming work stages</p>
+            </div>
+          </div>
+
+          <form onSubmit={handleRaiseRequest} className="bf-form" style={{ marginTop: 14 }}>
+            <div className="bf-input-group">
+              <label className="bf-label">Project Contract *</label>
+              <select
+                className="bf-select"
+                value={requestForm.projectId}
+                onChange={(e) => setRequestForm({ ...requestForm, projectId: e.target.value })}
+                required
+              >
+                <option value="">Select an assigned project...</option>
+                {projects.map((p) => (
+                  <option key={p.projectId} value={p.projectId}>
+                    {p.name} (Remaining: {formatINR(Math.max(0, p.totalFund - (p.releasedFund || 0)))})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="bf-input-group">
+              <label className="bf-label">Requested Amount (INR) *</label>
+              <input
+                type="number"
+                className="bf-input"
+                placeholder="e.g. 750000"
+                value={requestForm.amount}
+                onChange={(e) => setRequestForm({ ...requestForm, amount: e.target.value })}
+                required
+              />
+            </div>
+
+            <div className="bf-input-group">
+              <label className="bf-label">Justification & Milestone Stage</label>
+              <textarea
+                className="bf-textarea"
+                rows={3}
+                placeholder="Describe the milestone deliverables (e.g. Completing bridge girder installation requiring cement batch #4)..."
+                value={requestForm.note}
+                onChange={(e) => setRequestForm({ ...requestForm, note: e.target.value })}
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="bf-primary-btn"
+              disabled={raisingRequest}
+              style={{ marginTop: 8 }}
+            >
+              <span>{raisingRequest ? 'Submitting Claim...' : 'Submit Milestone Claim to Authority'}</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   );
 }

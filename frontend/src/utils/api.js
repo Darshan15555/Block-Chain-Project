@@ -66,21 +66,27 @@ export const api = {
   // Auth
   login: (data) => API.post('/auth/login', data),
   signup: (data) => API.post('/auth/signup', data),
+  loginPublicViewer: () => API.post('/auth/public-viewer'),
   me: () => API.get('/auth/me'),
   getWalletOptions: () => API.get('/auth/wallet-options'),
 
   // Users
   getContractors: () => API.get('/users/contractors'),
+  inviteContractor: (data) => API.post('/users/contractors/invite', data),
 
   // Projects
-  createProject: (data) => API.post('/createProject', data),
+  createProject: (data) => API.post('/createProject', data, {
+    headers: data instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : {},
+  }),
   getProjects: () => API.get('/projects'),
   getProject: (id) => API.get(`/projects/${id}`),
   getProjectTimeline: (projectId) => API.get(`/projects/${projectId}/timeline`),
   updateProjectStatus: (projectId, status) => API.patch(`/projects/${projectId}/status`, { status }),
 
   // Updates
-  submitUpdate: (data) => API.post('/updateWork', data),
+  submitUpdate: (data) => API.post('/updateWork', data, {
+    headers: data instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : {},
+  }),
   getUpdates: (projectId) => API.get(`/updates/${projectId}`),
 
   // Funds

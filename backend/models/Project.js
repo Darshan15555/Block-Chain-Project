@@ -22,6 +22,15 @@ const projectSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    description: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    imagePath: {
+      type: String,
+      default: null,
+    },
     totalFund: {
       type: Number,
       required: true,

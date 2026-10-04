@@ -31,6 +31,10 @@ const verificationSchema = new mongoose.Schema(
       default: '',
       maxlength: 500,
     },
+    photoPath: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true }
 );

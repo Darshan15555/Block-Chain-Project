@@ -8,6 +8,7 @@ const DEMO_USERS = [
     password: 'Authority@123',
     role: 'authority',
     walletAddress: process.env.AUTHORITY_ADDRESS || '0x121077538f6d6ed13538bbfb6f112fb25b01411b',
+    companyName: '',
   },
   {
     name: 'Contractor1',
@@ -15,6 +16,7 @@ const DEMO_USERS = [
     password: 'Contractor@123',
     role: 'contractor',
     walletAddress: '0x1234567890123456789012345678901234567890',
+    companyName: 'Sharma Constructions Pvt Ltd',
   },
   {
     name: 'Contractor2',
@@ -22,6 +24,7 @@ const DEMO_USERS = [
     password: 'Contractor@123',
     role: 'contractor',
     walletAddress: '0x2345678901234567890123456789012345678901',
+    companyName: 'Patel Infrastructure LLC',
   },
   {
     name: 'PublicUser',
@@ -29,6 +32,7 @@ const DEMO_USERS = [
     password: 'Public@123',
     role: 'public',
     walletAddress: null,
+    companyName: '',
   },
 ];
 
@@ -46,9 +50,11 @@ async function ensureDemoUsers() {
       passwordHash,
       role: demoUser.role,
       walletAddress: demoUser.walletAddress,
+      companyName: demoUser.companyName || '',
     });
   }
 }
+
 
 module.exports = {
   ensureDemoUsers,

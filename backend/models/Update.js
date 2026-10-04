@@ -56,6 +56,14 @@ const updateSchema = new mongoose.Schema(
       enum: ['confirmed', 'failed', 'reconciliation_required'],
       default: 'confirmed',
     },
+    photoPath: {
+      type: String,
+      default: null,
+    },
+    photoHash: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true }
 );

@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { api, formatINR, formatDate, getPercent } from '../utils/api';
-import ExplainPanel from '../components/ExplainPanel.jsx';
-import StatusLegend from '../components/StatusLegend.jsx';
+import StatusBadge from '../components/ui/StatusBadge';
+import LoadingSkeleton from '../components/ui/LoadingSkeleton';
+import EmptyState from '../components/ui/EmptyState';
 import LastUpdatedLabel from '../components/LastUpdatedLabel.jsx';
 
 export default function VerifyWork({ showToast }) {
@@ -15,20 +16,18 @@ export default function VerifyWork({ showToast }) {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [onlyWithUpdates, setOnlyWithUpdates] = useState(false);
-  const [onlyUnverified, setOnlyUnverified] = useState(false);
-  const [sortBy, setSortBy] = useState('latest_update');
+  const [previewPhoto, setPreviewPhoto] = useState(null);
 
   const loadData = async () => {
     const projectsRes = await api.getProjects();
-    const fetchedProjects = projectsRes.data.projects || [];
+    const fetchedProjects = projectsRes.data?.projects || [];
     setProjects(fetchedProjects);
 
     const updatesEntries = await Promise.all(
       fetchedProjects.map(async (project) => {
         try {
           const updatesRes = await api.getUpdates(project.projectId);
-          const latest = updatesRes.data.updates?.[0] || null;
+          const latest = updatesRes.data?.updates?.[0] || null;
           return [project.projectId, latest];
         } catch {
           return [project.projectId, null];
@@ -42,7 +41,7 @@ export default function VerifyWork({ showToast }) {
 
   useEffect(() => {
     loadData()
-      .catch(() => showToast('Failed to load projects', 'error'))
+      .catch(() => showToast('Failed to load projects for verification', 'error'))
       .finally(() => setLoading(false));
 
     const timer = setInterval(() => {
@@ -70,18 +69,20 @@ export default function VerifyWork({ showToast }) {
         comment: commentDrafts[projectId] || '',
       });
 
-      showToast(`Verified as "${status}"`, 'success');
+      showToast(`Verification registered as "${status}" on public ledger`, 'success');
       setDone((prev) => ({ ...prev, [doneKey]: status }));
       setActiveComment(null);
       setCommentDrafts((prev) => ({ ...prev, [projectId]: '' }));
 
-      setProjects((prev) => prev.map((project) => {
-        if (project.projectId !== projectId) return project;
-        const counts = { ...project.verificationCount };
-        if (status === 'Work Done') counts.workDone = (counts.workDone || 0) + 1;
-        else counts.notDone = (counts.notDone || 0) + 1;
-        return { ...project, verificationCount: counts };
-      }));
+      setProjects((prev) =>
+        prev.map((project) => {
+          if (project.projectId !== projectId) return project;
+          const counts = { ...project.verificationCount };
+          if (status === 'Work Done') counts.workDone = (counts.workDone || 0) + 1;
+          else counts.notDone = (counts.notDone || 0) + 1;
+          return { ...project, verificationCount: counts };
+        })
+      );
     } catch (error) {
       showToast(error.response?.data?.error || 'Verification failed', 'error');
     } finally {
@@ -91,322 +92,230 @@ export default function VerifyWork({ showToast }) {
 
   const filteredProjects = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    const rows = projects.filter((project) => {
+    return projects.filter((project) => {
       const statusOk =
         statusFilter === 'all' ||
         String(project.status || '').toLowerCase() === statusFilter;
       if (!statusOk) return false;
 
-      const latestUpdate = latestUpdates[project.projectId];
-      if (onlyWithUpdates && !latestUpdate) return false;
-
       if (!term) return true;
-      const haystack = [
-        project.name,
-        project.projectId,
-        project.location,
-        project.contractor?.name,
-        project.type,
-        latestUpdate?.workDescription,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(term);
+      return (
+        String(project.name || '').toLowerCase().includes(term) ||
+        String(project.location || '').toLowerCase().includes(term) ||
+        String(project.projectId || '').toLowerCase().includes(term)
+      );
     });
-    const withUnverified = rows.filter((project) => {
-      if (!onlyUnverified) return true;
-      const latestUpdate = latestUpdates[project.projectId];
-      if (!latestUpdate?._id) return false;
-      const doneKey = `${project.projectId}:${latestUpdate._id}`;
-      return !done[doneKey];
-    });
+  }, [projects, searchTerm, statusFilter]);
 
-    return withUnverified.sort((a, b) => {
-      if (sortBy === 'highest_spent') return Number(b.spentFund || 0) - Number(a.spentFund || 0);
-      if (sortBy === 'highest_progress') return getPercent(b.spentFund, b.totalFund) - getPercent(a.spentFund, a.totalFund);
-      if (sortBy === 'name') return String(a.name || '').localeCompare(String(b.name || ''));
-      const aTs = new Date(latestUpdates[a.projectId]?.date || a.createdAt || 0).getTime();
-      const bTs = new Date(latestUpdates[b.projectId]?.date || b.createdAt || 0).getTime();
-      return bTs - aTs;
-    });
-  }, [projects, latestUpdates, searchTerm, statusFilter, onlyWithUpdates, onlyUnverified, done, sortBy]);
-
-  const handleExportVerificationRows = () => {
-    if (filteredProjects.length === 0) {
-      showToast('No verification rows to export', 'info');
-      return;
-    }
-    const rows = [
-      ['Project', 'Project ID', 'Contractor', 'Status', 'Spent', 'Total', 'Latest Update Date', 'Latest Update Summary'],
-      ...filteredProjects.map((project) => {
-        const latest = latestUpdates[project.projectId];
-        return [
-          project.name,
-          project.projectId,
-          project.contractor?.name || '',
-          project.status,
-          project.spentFund,
-          project.totalFund,
-          formatDate(latest?.date),
-          latest?.workDescription || '',
-        ];
-      }),
-    ];
-    const csv = rows
-      .map((row) =>
-        row
-          .map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`)
-          .join(',')
-      )
-      .join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `verify-work-${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast('Verification list exported', 'success');
-  };
-
-  const statusCounts = useMemo(
-    () => ({
-      created: projects.filter((project) => String(project.status || '').toLowerCase() === 'created').length,
-      active: projects.filter((project) => String(project.status || '').toLowerCase() === 'active').length,
-      completed: projects.filter((project) => String(project.status || '').toLowerCase() === 'completed').length,
-      suspended: projects.filter((project) => String(project.status || '').toLowerCase() === 'suspended').length,
-    }),
-    [projects]
-  );
-
-  if (loading) return <div className="spinner" />;
+  if (loading) {
+    return (
+      <div className="bf-page-stack">
+        <LoadingSkeleton type="card" count={3} height={220} />
+      </div>
+    );
+  }
 
   return (
-    <div>
-      <div className="section-header">
+    <div className="bf-page-stack">
+      {/* Header */}
+      <div className="bf-page-header">
         <div>
-          <div className="section-title">Verify Work</div>
-          <div className="section-subtitle">
-            One user can verify each update only once | <LastUpdatedLabel value={lastUpdated} />
+          <h1 className="bf-page-title">Citizen Work Verification & Public Audit</h1>
+          <p className="bf-page-subtitle">
+            Inspect photographic evidence and material claims submitted by contractors. Cast your public verification vote.
+          </p>
+        </div>
+        <LastUpdatedLabel date={lastUpdated} />
+      </div>
+
+      {/* Filter Bar */}
+      <div className="bf-card bf-search-filter-card">
+        <div className="bf-filter-controls-row">
+          <div className="bf-search-input-wrap">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              className="bf-search-input"
+              placeholder="Search projects to audit by name or location..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
+          <div className="bf-status-chips-row" style={{ margin: 0 }}>
+            {['all', 'active', 'completed', 'suspended'].map((st) => (
+              <button
+                key={st}
+                type="button"
+                className={`bf-filter-pill ${statusFilter === st ? 'active' : ''}`}
+                onClick={() => setStatusFilter(st)}
+              >
+                {st.charAt(0).toUpperCase() + st.slice(1)}
+              </button>
+            ))}
           </div>
         </div>
-        <button className="btn btn-ghost btn-sm" type="button" onClick={handleExportVerificationRows}>
-          Export CSV
-        </button>
       </div>
 
-      <div className="explain-grid">
-        <ExplainPanel
-          title="Verification In 4 Steps"
-          subtitle="Public role flow"
-          tone="green"
-          steps={[
-            'Open project and check latest update summary.',
-            'Compare work details with your observation.',
-            'Select Work Done or Not Done once.',
-            'Optional comment helps audit clarity.',
-          ]}
-        />
-        <ExplainPanel
-          title="What This Proves"
-          subtitle="For non-technical audience"
-          tone="accent"
-          steps={[
-            'Community can validate project progress.',
-            'Verification counts are transparent on dashboard.',
-            'Latest update trace links to blockchain timeline.',
-          ]}
-        />
-      </div>
-
-      <StatusLegend statuses={['created', 'active', 'completed', 'suspended']} />
-
-      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-bright)', borderRadius: 'var(--radius)', padding: '16px 20px', marginBottom: 24, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-        Verify based on the latest submitted update for each project. Duplicate votes for the same update are blocked server-side.
-      </div>
-      <div className="filter-row">
-        <input
-          className="form-input"
-          style={{ minWidth: 220, maxWidth: 320 }}
-          placeholder="Search project, ID, contractor, latest update"
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-        />
-        {[
-          { id: 'all', label: `All (${projects.length})` },
-          { id: 'created', label: `Created (${statusCounts.created})` },
-          { id: 'active', label: `Active (${statusCounts.active})` },
-          { id: 'completed', label: `Completed (${statusCounts.completed})` },
-          { id: 'suspended', label: `Suspended (${statusCounts.suspended})` },
-        ].map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`filter-chip ${statusFilter === item.id ? 'active' : ''}`}
-            onClick={() => setStatusFilter(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
-        <button
-          type="button"
-          className={`filter-chip ${onlyWithUpdates ? 'active' : ''}`}
-          onClick={() => setOnlyWithUpdates((prev) => !prev)}
-        >
-          Only with updates
-        </button>
-        <button
-          type="button"
-          className={`filter-chip ${onlyUnverified ? 'active' : ''}`}
-          onClick={() => setOnlyUnverified((prev) => !prev)}
-        >
-          Only unverified
-        </button>
-        <select
-          className="form-select"
-          style={{ minWidth: 170, maxWidth: 210 }}
-          value={sortBy}
-          onChange={(event) => setSortBy(event.target.value)}
-        >
-          <option value="latest_update">Sort: Latest Update</option>
-          <option value="highest_spent">Sort: Highest Spent</option>
-          <option value="highest_progress">Sort: Highest Progress</option>
-          <option value="name">Sort: Name A-Z</option>
-        </select>
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm"
-          onClick={() => {
-            setSearchTerm('');
-            setStatusFilter('all');
-            setOnlyWithUpdates(false);
-            setOnlyUnverified(false);
-            setSortBy('latest_update');
-          }}
-        >
-          Clear filters
-        </button>
-      </div>
-
-      {filteredProjects.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-title">
-            {projects.length === 0 ? 'No projects to verify' : 'No projects match current filters'}
-          </div>
-          <div className="empty-desc">
-            {projects.length === 0
-              ? 'Projects will appear here after authority creates them.'
-              : 'Adjust search/filter options to continue verification.'}
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {filteredProjects.map((project) => {
-            const percent = getPercent(project.spentFund, project.totalFund);
-            const latestUpdate = latestUpdates[project.projectId];
-            const doneKey = latestUpdate?._id ? `${project.projectId}:${latestUpdate._id}` : null;
-            const alreadyVerified = doneKey ? done[doneKey] : null;
+      {/* Verification Cards Grid */}
+      {filteredProjects.length > 0 ? (
+        <div className="bf-verify-feed">
+          {filteredProjects.map((p) => {
+            const latest = latestUpdates[p.projectId];
+            const doneKey = latest ? `${p.projectId}:${latest._id}` : '';
+            const userVoted = done[doneKey];
+            const workDone = p.verificationCount?.workDone || 0;
+            const notDone = p.verificationCount?.notDone || 0;
 
             return (
-              <div key={project.projectId} className="project-card">
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 20, alignItems: 'start' }}>
+              <div key={p.projectId} className="bf-card bf-verify-card">
+                <div className="bf-verify-card-header">
                   <div>
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                      <span className={`project-type-badge type-${project.type?.toLowerCase().replace(' ', '')}`}>{project.type}</span>
-                      <span className={`status-badge status-${String(project.status || '').toLowerCase()}`}>{project.status}</span>
+                    <div className="bf-verify-card-meta">
+                      <span className={`project-type-badge type-${p.type?.toLowerCase().replace(/\s+/g, '')}`}>
+                        {p.type}
+                      </span>
+                      <span>📍 {p.location}</span>
+                      <span className="font-mono text-muted">ID: {p.projectId}</span>
                     </div>
-                    <div className="project-name" style={{ fontSize: 15 }}>{project.name}</div>
-                    <div className="project-location">{project.location}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, marginBottom: 10 }}>
-                      Contractor: {project.contractor?.name}
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 16, alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>FUND UTILIZATION</div>
-                        <div className="fund-bar-track">
-                          <div className={`fund-bar-fill ${percent > 80 ? 'danger' : ''}`} style={{ width: `${percent}%` }} />
-                        </div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>
-                          {formatINR(project.spentFund)} / {formatINR(project.totalFund)} ({percent}%)
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', gap: 16, fontSize: 12 }}>
-                        <span style={{ color: 'var(--green)' }}>Done: {project.verificationCount?.workDone || 0}</span>
-                        <span style={{ color: 'var(--red)' }}>Not Done: {project.verificationCount?.notDone || 0}</span>
-                      </div>
-                    </div>
-
-                    {latestUpdate ? (
-                      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-secondary)' }}>
-                        Latest update: {formatDate(latestUpdate.date)} - {latestUpdate.workDescription}
-                      </div>
-                    ) : (
-                      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--orange)' }}>
-                        No submitted updates yet for verification.
-                      </div>
-                    )}
+                    <h2 className="bf-verify-project-title">{p.name}</h2>
                   </div>
-
-                  <div style={{ minWidth: 220 }}>
-                    {!latestUpdate ? (
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Verification available once contractor submits an update.</div>
-                    ) : alreadyVerified ? (
-                      <div style={{
-                        padding: '12px 16px', borderRadius: 8, textAlign: 'center', fontSize: 12, fontWeight: 700,
-                        background: alreadyVerified === 'Work Done' ? 'var(--green-glow)' : 'var(--red-glow)',
-                        color: alreadyVerified === 'Work Done' ? 'var(--green)' : 'var(--red)',
-                        border: `1px solid ${alreadyVerified === 'Work Done' ? 'rgba(0,255,136,0.3)' : 'rgba(255,77,109,0.3)'}`,
-                      }}>
-                        You marked: {alreadyVerified}
-                      </div>
-                    ) : (
-                      <div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          <button
-                            className="verify-btn verify-done"
-                            disabled={submitting === doneKey + 'Work Done'}
-                            onClick={() => handleVerify(project.projectId, 'Work Done')}
-                          >
-                            {submitting === doneKey + 'Work Done' ? 'Submitting...' : 'Work Done'}
-                          </button>
-                          <button
-                            className="verify-btn verify-notdone"
-                            disabled={submitting === doneKey + 'Not Done'}
-                            onClick={() => handleVerify(project.projectId, 'Not Done')}
-                          >
-                            {submitting === doneKey + 'Not Done' ? 'Submitting...' : 'Not Done'}
-                          </button>
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            style={{ fontSize: 10 }}
-                            onClick={() => setActiveComment(activeComment === project.projectId ? null : project.projectId)}
-                          >
-                            Add comment
-                          </button>
-                        </div>
-
-                        {activeComment === project.projectId && (
-                          <div style={{ marginTop: 8 }}>
-                            <textarea
-                              className="form-textarea"
-                              style={{ minHeight: 60, fontSize: 11 }}
-                              placeholder="Optional: describe what you observed..."
-                              value={commentDrafts[project.projectId] || ''}
-                              onChange={(event) => setCommentDrafts((prev) => ({ ...prev, [project.projectId]: event.target.value }))}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  <StatusBadge status={p.status || 'Active'} />
                 </div>
+
+                {/* Latest Milestone Update Inspection */}
+                {latest ? (
+                  <div className="bf-verify-evidence-box">
+                    <div className="bf-evidence-header">
+                      <span className="bf-evidence-tag">LATEST MILESTONE LOG</span>
+                      <span className="bf-evidence-date">{formatDate(latest.date || latest.createdAt)}</span>
+                    </div>
+
+                    <p className="bf-evidence-desc">
+                      "{latest.workDescription}"
+                    </p>
+
+                    <div className="bf-evidence-details-row">
+                      <div>
+                        <span className="bf-micro-lbl">Expenditure Claimed</span>
+                        <strong className="text-blue">{formatINR(latest.amountSpent)}</strong>
+                      </div>
+                      {latest.materialsUsed && (
+                        <div>
+                          <span className="bf-micro-lbl">Materials Consumed</span>
+                          <span>{latest.materialsUsed}</span>
+                        </div>
+                      )}
+                      {latest.workersCount > 0 && (
+                        <div>
+                          <span className="bf-micro-lbl">On-Site Labor</span>
+                          <span>{latest.workersCount} Workers</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Evidence Photo */}
+                    {latest.photoPath && (
+                      <div className="bf-evidence-photo-strip">
+                        <img
+                          src={latest.photoPath.startsWith('http') ? latest.photoPath : `/${latest.photoPath.replace(/^[\/\\]+/, '')}`}
+                          alt="Site verification evidence"
+                          className="bf-evidence-preview-img"
+                          onClick={() => setPreviewPhoto(latest.photoPath)}
+                        />
+                        <span className="bf-evidence-zoom-hint">🔍 Click photo to inspect high-resolution site proof</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bf-no-update-banner">
+                    <span>ℹ️ No physical work updates have been logged yet for this project.</span>
+                  </div>
+                )}
+
+                {/* Verification Action Bar */}
+                <div className="bf-verify-actions-bar">
+                  <div className="bf-tally-pill">
+                    <span className="text-emerald font-semibold">✓ {workDone} Verified</span>
+                    <span className="text-muted">|</span>
+                    <span className="text-danger font-semibold">✕ {notDone} Issues</span>
+                  </div>
+
+                  {userVoted ? (
+                    <div className="bf-voted-badge">
+                      ✓ You voted: <strong>{userVoted}</strong>
+                    </div>
+                  ) : (
+                    <div className="bf-vote-buttons-row">
+                      <button
+                        type="button"
+                        className="bf-primary-btn bf-btn-sm bf-vote-btn done"
+                        onClick={() => handleVerify(p.projectId, 'Work Done')}
+                        disabled={!latest || submitting === `${doneKey}Work Done`}
+                      >
+                        <span>{submitting === `${doneKey}Work Done` ? 'Voting...' : '✓ Confirm Work Done'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="bf-secondary-btn bf-btn-sm bf-vote-btn not-done"
+                        onClick={() => handleVerify(p.projectId, 'Not Done')}
+                        disabled={!latest || submitting === `${doneKey}Not Done`}
+                      >
+                        <span>✕ Report Discrepancy</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="bf-btn-ghost bf-btn-sm"
+                        onClick={() => setActiveComment(activeComment === p.projectId ? null : p.projectId)}
+                      >
+                        💬 {activeComment === p.projectId ? 'Hide Comment' : 'Add Comment'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Optional Comment Input Drawer */}
+                {activeComment === p.projectId && !userVoted && (
+                  <div className="bf-comment-drawer">
+                    <input
+                      type="text"
+                      className="bf-input"
+                      placeholder="Add an optional comment regarding on-ground site verification..."
+                      value={commentDrafts[p.projectId] || ''}
+                      onChange={(e) => setCommentDrafts({ ...commentDrafts, [p.projectId]: e.target.value })}
+                    />
+                  </div>
+                )}
               </div>
             );
           })}
+        </div>
+      ) : (
+        <EmptyState
+          title="No projects available for verification"
+          description="There are currently no projects matching your query."
+        />
+      )}
+
+      {/* Photo Modal Preview if clicked */}
+      {previewPhoto && (
+        <div className="bf-modal-backdrop" onClick={() => setPreviewPhoto(null)}>
+          <div className="bf-modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 680 }}>
+            <div className="bf-modal-header">
+              <h3>Site Milestone Photo Evidence</h3>
+              <button type="button" className="bf-btn-ghost" onClick={() => setPreviewPhoto(null)}>✕</button>
+            </div>
+            <img
+              src={previewPhoto.startsWith('http') ? previewPhoto : `/${previewPhoto.replace(/^[\/\\]+/, '')}`}
+              alt="Evidence Inspection"
+              style={{ width: '100%', maxHeight: 460, objectFit: 'cover', borderRadius: 12 }}
+            />
+          </div>
         </div>
       )}
     </div>

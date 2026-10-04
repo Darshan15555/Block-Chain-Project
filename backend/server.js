@@ -1,7 +1,8 @@
-﻿require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const path = require('path');
 
 const { initWeb3 } = require('./middleware/web3Service');
 const { ensureDemoUsers } = require('./services/seedUsers');
@@ -14,6 +15,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(path.resolve(__dirname, 'uploads')));
 
 app.use('/api/auth', authRoutes);
 app.use('/api', projectRoutes);

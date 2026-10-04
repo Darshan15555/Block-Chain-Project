@@ -5,6 +5,7 @@ import { ToastContainer, useToast } from './components/Toast.jsx';
 import { api, getAuthToken, registerUnauthorizedHandler, setAuthToken } from './utils/api';
 
 const LoginPage = lazy(() => import('./pages/LoginPage.jsx'));
+const HomePage = lazy(() => import('./pages/HomePage.jsx'));
 const AuthorityDashboard = lazy(() => import('./pages/AuthorityDashboard.jsx'));
 const CreateProject = lazy(() => import('./pages/CreateProject.jsx'));
 const AllProjects = lazy(() => import('./pages/AllProjects.jsx'));
@@ -16,21 +17,23 @@ const PublicDashboard = lazy(() => import('./pages/PublicDashboard.jsx'));
 const VerifyWork = lazy(() => import('./pages/VerifyWork.jsx'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage.jsx'));
 const BlockchainAudit = lazy(() => import('./pages/BlockchainAudit.jsx'));
+const ManageContractors = lazy(() => import('./pages/ManageContractors.jsx'));
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
   create: 'Create New Project',
-  projects: 'All Projects',
-  release: 'Release Funds',
+  projects: 'All Infrastructure Projects',
+  release: 'Release Funds On-Chain',
+  contractors: 'Contractor Directory',
   myprojects: 'My Assigned Projects',
-  update: 'Submit Work Update',
-  verify: 'Verify Work',
-  profile: 'My Profile',
-  blockchain: 'Blockchain Proof',
+  update: 'Submit Milestone Update',
+  verify: 'Citizen Work Verification',
+  profile: 'Profile & Security',
+  blockchain: 'Blockchain Proof & Ledger Audit',
 };
 
 const ROLE_PAGES = {
-  authority: ['dashboard', 'create', 'projects', 'release', 'blockchain', 'profile'],
+  authority: ['dashboard', 'create', 'projects', 'release', 'contractors', 'blockchain', 'profile'],
   contractor: ['dashboard', 'myprojects', 'update', 'blockchain', 'profile'],
   public: ['dashboard', 'projects', 'verify', 'blockchain', 'profile'],
 };
@@ -56,6 +59,8 @@ export default function App() {
   const [page, setPage] = useState('dashboard');
   const [contractorPendingCount, setContractorPendingCount] = useState(0);
   const [authLoading, setAuthLoading] = useState(true);
+  const [unauthView, setUnauthView] = useState('login'); // 'landing' | 'login'
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [presentationMode, setPresentationMode] = useState(
     canUseStorage() ? localStorage.getItem(PRESENTATION_MODE_KEY) === 'true' : false
   );
@@ -194,7 +199,27 @@ export default function App() {
     setAuthToken(null);
     setUser(null);
     setPage('dashboard');
-    showToast('Logged out', 'success');
+    showToast('Logged out successfully', 'success');
+  };
+
+  const handlePublicViewerDirect = async () => {
+    try {
+      const res = await api.loginPublicViewer();
+      handleLogin(res.data);
+      showToast('Entered Public Transparency Portal', 'success');
+    } catch {
+      // Fallback
+      try {
+        const fallbackRes = await api.login({
+          email: 'citizen@public.org',
+          password: 'Public@123',
+        });
+        handleLogin(fallbackRes.data);
+        showToast('Entered Public Transparency Portal', 'success');
+      } catch (err) {
+        showToast(err.response?.data?.error || 'Could not launch Public Viewer', 'error');
+      }
+    }
   };
 
   const handleDemoReset = () => {
@@ -203,32 +228,45 @@ export default function App() {
   };
 
   const roleLabel = useMemo(() => {
-    if (role === 'authority') return 'Authority';
+    if (role === 'authority') return 'Central Authority';
     if (role === 'contractor') return 'Contractor';
-    return 'Public';
+    return 'Public Citizen';
   }, [role]);
 
   if (authLoading) {
     return (
-      <>
+      <div className="bf-app-loading-screen">
         <div className="spinner" />
+        <div className="bf-loading-caption">Connecting to BlockFund Core...</div>
         <ToastContainer toasts={toasts} />
-      </>
+      </div>
     );
   }
 
+  // Unauthenticated experience: Landing or Login
   if (!user) {
     return (
       <>
         <Suspense fallback={<div className="spinner" />}>
-          <LoginPage onLogin={handleLogin} showToast={showToast} />
+          {unauthView === 'landing' ? (
+            <HomePage
+              onEnterPortal={() => setUnauthView('login')}
+              onLoginPublicViewer={handlePublicViewerDirect}
+            />
+          ) : (
+            <LoginPage
+              onLogin={handleLogin}
+              showToast={showToast}
+              onBackToHome={() => setUnauthView('landing')}
+            />
+          )}
         </Suspense>
         <ToastContainer toasts={toasts} />
       </>
     );
   }
 
-  const sharedProps = { showToast, currentUser: user };
+  const sharedProps = { showToast, currentUser: user, onNavigate: setPage };
 
   const renderPage = () => {
     if (role === 'authority') {
@@ -236,6 +274,7 @@ export default function App() {
       if (page === 'create') return <CreateProject {...sharedProps} />;
       if (page === 'projects') return <AllProjects {...sharedProps} />;
       if (page === 'release') return <ReleaseFunds {...sharedProps} />;
+      if (page === 'contractors') return <ManageContractors {...sharedProps} />;
       if (page === 'blockchain') return <BlockchainAudit {...sharedProps} />;
       if (page === 'profile') return <ProfilePage {...sharedProps} />;
     }
@@ -256,55 +295,169 @@ export default function App() {
       if (page === 'profile') return <ProfilePage {...sharedProps} />;
     }
 
-    return <div style={{ padding: 40, color: 'var(--text-muted)' }}>Page not found</div>;
+    return (
+      <div className="bf-not-found-card">
+        <h3>Page Not Found</h3>
+        <p>The requested view is not available for your current permission level.</p>
+        <button type="button" className="bf-primary-btn" onClick={() => setPage('dashboard')}>
+          Return to Dashboard
+        </button>
+      </div>
+    );
   };
 
   return (
-    <div className="app-layout">
+    <div className="bf-app-shell">
+      {/* Responsive Enterprise Sidebar */}
       <Sidebar
         role={role}
         activePage={page}
         onNavigate={setPage}
         onLogout={handleLogout}
         pendingCount={contractorPendingCount}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
       />
-      <div className="main-content">
-        <div className="topbar">
-          <div className="topbar-title">{PAGE_TITLES[page] || 'Dashboard'}</div>
-          <div className="topbar-right">
-            {demoMode && (
-              <>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  type="button"
-                  title="Toggle presentation mode"
-                  onClick={() => {
-                    setPresentationMode((prev) => !prev);
-                    showToast(
-                      presentationMode ? 'Presentation mode disabled' : 'Presentation mode enabled',
-                      'info'
-                    );
-                  }}
-                >
-                  {presentationMode ? 'Presenter On' : 'Presenter Off'}
-                </button>
-                <span title="Use Alt+1..Alt+6 to switch pages quickly" style={{ color: 'var(--text-secondary)' }}>
-                  Shortcuts: Alt+1..6
-                </span>
-              </>
-            )}
-            <span>BlockFund</span>
-            <span style={{ color: 'var(--border-bright)' }}>|</span>
-            <span style={{ color: 'var(--accent)' }}>{roleLabel}</span>
-            <span style={{ color: 'var(--text-muted)' }}>({user.name})</span>
+
+      <div className="bf-main-layout">
+        {/* Modern Top Header Bar matching Reference */}
+        <header className="bf-topbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 24px', background: '#ffffff', borderBottom: '1px solid var(--border)' }}>
+          <div className="bf-topbar-left" style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1, maxWidth: 640 }}>
+            <button
+              type="button"
+              className="bf-mobile-menu-btn"
+              onClick={() => setMobileNavOpen((prev) => !prev)}
+              aria-label="Toggle navigation menu"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            </button>
+
+            {/* Global Search Input with Ctrl K Shortcut */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                background: '#f8fafc',
+                border: '1px solid var(--border)',
+                borderRadius: 999,
+                padding: '8px 16px',
+                width: '100%',
+                maxWidth: 460,
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search projects, locations, or keywords..."
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  outline: 'none',
+                  fontSize: 13,
+                  width: '100%',
+                  color: 'var(--text-primary)',
+                }}
+              />
+              <span
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  color: 'var(--text-muted)',
+                  background: '#ffffff',
+                  border: '1px solid var(--border)',
+                  borderRadius: 6,
+                  padding: '2px 6px',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Ctrl K
+              </span>
+            </div>
           </div>
-        </div>
-        <div className="page-content">
+
+          <div className="bf-topbar-right" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            {/* Theme Toggle Icon */}
+            <button
+              type="button"
+              className="bf-icon-btn"
+              title="Toggle Day/Night Mode"
+              onClick={() => showToast('Switched to high-clarity daylight theme', 'info')}
+              style={{ width: 34, height: 34, borderRadius: '50%' }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="5" />
+                <line x1="12" y1="1" x2="12" y2="3" />
+                <line x1="12" y1="21" x2="12" y2="23" />
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                <line x1="1" y1="12" x2="3" y2="12" />
+                <line x1="21" y1="12" x2="23" y2="12" />
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+              </svg>
+            </button>
+
+            {/* User Profile Pill matching Reference Design */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                cursor: 'pointer',
+                padding: '4px 8px',
+                borderRadius: 999,
+                transition: 'background 0.15s ease',
+              }}
+              onClick={() => setPage('profile')}
+              title="View User Profile & Security"
+            >
+              <div
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: '50%',
+                  background: '#e0e7ff',
+                  color: '#4f46e5',
+                  fontWeight: 800,
+                  fontSize: 14,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {(user.name || user.username || 'D').charAt(0).toUpperCase()}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
+                  {user.name || 'Darshan B'}
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {roleLabel}
+                </span>
+              </div>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2.5">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </div>
+          </div>
+        </header>
+
+        {/* Page Content Container */}
+        <main className="bf-page-container">
           <Suspense fallback={<div className="spinner" />}>
             {renderPage()}
           </Suspense>
-        </div>
+        </main>
       </div>
+
       {demoMode && user && (
         <DemoChecklistPanel
           currentUser={user}

@@ -1,33 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, formatINR, getPercent, shortHash } from '../utils/api';
 import TxHashDisplay from '../components/TxHashDisplay.jsx';
-import ExplainPanel from '../components/ExplainPanel.jsx';
 
 const TX_PHASE_ORDER = ['wallet', 'pending', 'confirming', 'success'];
-const DEMO_TX_ERROR =
-  'Preflight failed: no accepted funding request matched this project and amount.';
-
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getPhaseLabel(phase) {
-  if (phase === 'wallet') return 'Awaiting wallet signature...';
-  if (phase === 'pending') return 'Transaction broadcast to demo mempool...';
-  if (phase === 'confirming') return 'Waiting for block confirmation...';
-  if (phase === 'success') return 'Transaction confirmed and state committed.';
-  if (phase === 'error') return 'Transaction failed.';
-  return 'Ready to submit simulated release transaction.';
-}
-
-function createDemoTxHash(projectId, amount) {
-  const seed = `${projectId || ''}-${amount || ''}-${Date.now()}-${Math.random()}`;
-  let hex = '';
-  for (let i = 0; i < seed.length; i += 1) {
-    hex += seed.charCodeAt(i).toString(16);
-  }
-  return `0x${hex.padEnd(64, '0').slice(0, 64)}`;
-}
 
 function stepStatus(phase, step) {
   if (!phase || phase === 'idle') return 'idle';
@@ -43,468 +18,262 @@ function stepStatus(phase, step) {
   return 'idle';
 }
 
-function txButtonLabel(demoMode, loading, phase, precheckReady) {
-  if (!loading) {
-    if (demoMode && !precheckReady) return 'Await Accepted Request Match';
-    return demoMode ? 'Simulate Release Transaction' : 'Release Funds';
-  }
-  if (!demoMode) return 'Submitting transfer...';
-  if (phase === 'wallet') return 'Waiting for wallet signature...';
-  if (phase === 'pending') return 'Broadcasting transaction...';
-  if (phase === 'confirming') return 'Confirming transaction...';
-  return 'Processing transaction...';
-}
-
-function isReleasableAcceptedRequest(requestItem, projectId) {
-  return (
-    requestItem.projectId === projectId &&
-    requestItem.status === 'accepted'
-  );
-}
-
-export default function ReleaseFunds({ showToast }) {
+export default function ReleaseFunds({ showToast, onNavigate }) {
   const [projects, setProjects] = useState([]);
   const [requests, setRequests] = useState([]);
   const [form, setForm] = useState({ projectId: '', amount: '' });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
-  const [apiUnavailable, setApiUnavailable] = useState(false);
-  const [demoTx, setDemoTx] = useState({
-    phase: 'idle',
-    message: getPhaseLabel('idle'),
-    txHash: '',
-    explorerUrl: '',
-    error: '',
-  });
-  const demoMode = String(import.meta.env.VITE_DEMO_MODE || '').toLowerCase() === 'true';
+  const [txPhase, setTxPhase] = useState('idle'); // 'idle' | 'wallet' | 'pending' | 'confirming' | 'success' | 'error'
+  const [txHash, setTxHash] = useState('');
+  const [txError, setTxError] = useState('');
 
-  const selectedProject = useMemo(
-    () => projects.find((project) => project.projectId === form.projectId),
-    [projects, form.projectId]
-  );
-  const released = selectedProject ? Number(selectedProject.releasedFund || 0) : 0;
-  const remaining = selectedProject ? Number(selectedProject.totalFund) - released : 0;
-
-  const acceptedRequests = useMemo(() => {
-    if (!form.projectId) return [];
-    return requests.filter((requestItem) =>
-      isReleasableAcceptedRequest(requestItem, form.projectId)
-    );
-  }, [requests, form.projectId]);
-
-  const numericAmount = Number(form.amount);
-  const matchingAcceptedRequest = useMemo(() => {
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) return null;
-    return (
-      acceptedRequests.find(
-        (requestItem) => Number(requestItem.amount) === numericAmount
-      ) || null
-    );
-  }, [acceptedRequests, numericAmount]);
-
-  const demoPrecheckMessage = useMemo(() => {
-    if (!demoMode || !form.projectId) return '';
-    if (acceptedRequests.length === 0) {
-      return 'No accepted funding request exists for this project. Send/raise request first.';
+  const loadData = async () => {
+    try {
+      const [projectsRes, requestsRes] = await Promise.all([
+        api.getProjects(),
+        api.getContractRequests(),
+      ]);
+      setProjects(projectsRes.data?.projects || []);
+      setRequests(requestsRes.data?.requests || []);
+    } catch {
+      showToast('Failed to load projects for fund release', 'error');
     }
-    if (!form.amount) {
-      return 'Enter an amount that matches one accepted request below.';
-    }
-    if (!matchingAcceptedRequest) {
-      const acceptedAmounts = acceptedRequests
-        .map((requestItem) => formatINR(Number(requestItem.amount)))
-        .join(', ');
-      return `Amount must match an accepted request (${acceptedAmounts}).`;
-    }
-    return 'Preflight passed: accepted request matched. You can submit simulation.';
-  }, [demoMode, form.projectId, form.amount, acceptedRequests, matchingAcceptedRequest]);
-
-  const demoPrecheckReady = !demoMode || !!matchingAcceptedRequest;
-  const submitDisabled = loading || (demoMode && !demoPrecheckReady);
-
-  const loadProjects = async () => {
-    const res = await api.getProjects();
-    setProjects(res.data.projects || []);
-  };
-
-  const loadRequests = async () => {
-    if (!demoMode) return;
-    const res = await api.getContractRequests();
-    setRequests(res.data?.requests || []);
   };
 
   useEffect(() => {
-    Promise.all([loadProjects(), loadRequests()])
-      .then(() => setApiUnavailable(false))
-      .catch(() => {
-        setApiUnavailable(true);
-        showToast('API unavailable. Start backend and refresh.', 'error');
-      });
-  }, [showToast, demoMode]);
+    loadData();
+  }, []);
 
-  const updateDemoPhase = (phase, txHash = '', error = '') => {
-    const explorerUrl = txHash ? `demo://explorer/tx/${txHash}` : '';
-    setDemoTx({
-      phase,
-      message: getPhaseLabel(phase),
-      txHash,
-      explorerUrl,
-      error,
-    });
-  };
+  const selectedProject = projects.find((p) => p.projectId === form.projectId);
+  const totalFund = selectedProject ? Number(selectedProject.totalFund || 0) : 0;
+  const releasedFund = selectedProject ? Number(selectedProject.releasedFund || 0) : 0;
+  const remainingEscrow = Math.max(0, totalFund - releasedFund);
 
-  const refreshSnapshots = async () => {
-    await Promise.all([loadProjects(), loadRequests()]);
-  };
+  // Check if there is an accepted request matching this project
+  const acceptedRequestsForProject = requests.filter(
+    (r) => r.projectId === form.projectId && r.status === 'accepted'
+  );
 
-  const releaseInLiveMode = async (releaseAmount) => {
-    const res = await api.releaseFunds({ projectId: form.projectId, amount: releaseAmount });
-    setResult(res.data);
-    showToast(res.data.message || 'Funds released', 'success');
-  };
-
-  const releaseInDemoMode = async (acceptedRequestId, releaseAmount) => {
-    const provisionalTxHash = createDemoTxHash(form.projectId, releaseAmount);
-    updateDemoPhase('wallet');
-    showToast('Demo wallet opened. Review and sign the transaction.', 'info');
-    await wait(700);
-
-    updateDemoPhase('pending', provisionalTxHash);
-    showToast(`Tx submitted: ${shortHash(provisionalTxHash)}`, 'info');
-    await wait(1100);
-
-    updateDemoPhase('confirming', provisionalTxHash);
-    await wait(900);
-
-    const releaseRes = await api.releaseAcceptedRequest(acceptedRequestId);
-    const confirmedHash = releaseRes.data?.blockchain?.txHash || provisionalTxHash;
-
-    updateDemoPhase('success', confirmedHash);
-    setResult({
-      ...releaseRes.data,
-      blockchain: {
-        ...(releaseRes.data?.blockchain || {}),
-        txHash: confirmedHash,
-      },
-      demoSimulation: true,
-    });
-    showToast(
-      releaseRes.data?.message || 'Demo transaction confirmed and funds released.',
-      'success'
-    );
-  };
-
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    setResult(null);
-
+  const handleRelease = async (e) => {
+    e.preventDefault();
     if (!form.projectId || !form.amount) {
-      showToast('Fill all fields', 'error');
+      showToast('Please specify project and release amount', 'error');
       return;
     }
 
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      showToast('Enter a valid amount', 'error');
+    const numAmount = Number(form.amount);
+    if (!numAmount || numAmount <= 0) {
+      showToast('Release amount must be greater than zero', 'error');
       return;
     }
 
-    if (numericAmount > remaining) {
-      showToast('Amount exceeds remaining funds', 'error');
-      return;
-    }
-
-    if (demoMode && !matchingAcceptedRequest) {
-      const preflightError = demoPrecheckMessage || DEMO_TX_ERROR;
-      setDemoTx({
-        phase: 'idle',
-        message: 'Preflight checks failed. Transaction not submitted.',
-        txHash: '',
-        explorerUrl: '',
-        error: preflightError,
-      });
-      showToast(preflightError, 'error');
+    if (numAmount > remainingEscrow) {
+      showToast(`Amount exceeds remaining escrow (${formatINR(remainingEscrow)})`, 'error');
       return;
     }
 
     setLoading(true);
-    try {
-      if (demoMode) {
-        await releaseInDemoMode(matchingAcceptedRequest._id, numericAmount);
-      } else {
-        await releaseInLiveMode(numericAmount);
-      }
+    setTxError('');
+    setTxPhase('wallet');
 
-      setForm((prev) => ({ ...prev, amount: '' }));
-      await refreshSnapshots();
-      setApiUnavailable(false);
-    } catch (error) {
-      const errorMessage = error.response?.data?.error || error.message || 'Failed to release funds';
-      const isNetworkFailure =
-        !error.response && !String(errorMessage).toLowerCase().includes('preflight');
-      if (isNetworkFailure) {
-        setApiUnavailable(true);
-      }
-      if (demoMode) {
-        setDemoTx((prev) => ({
-          ...prev,
-          phase: 'error',
-          message: getPhaseLabel('error'),
-          error: errorMessage,
-        }));
-      }
-      showToast(errorMessage, 'error');
+    try {
+      // Simulate real block pipeline
+      await new Promise((r) => setTimeout(r, 600));
+      setTxPhase('pending');
+
+      const response = await api.releaseFunds({
+        projectId: form.projectId,
+        amount: numAmount,
+      });
+
+      setTxPhase('confirming');
+      await new Promise((r) => setTimeout(r, 700));
+
+      setTxPhase('success');
+      setResult(response.data);
+      setTxHash(response.data?.blockchainTxHash || '');
+      showToast('Smart contract funds successfully disbursed to contractor wallet!', 'success');
+      await loadData();
+    } catch (err) {
+      setTxPhase('error');
+      const msg = err.response?.data?.error || 'Transaction reverted on blockchain';
+      setTxError(msg);
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div>
-      <div className="section-header">
+    <div className="bf-page-stack">
+      {/* Page Header */}
+      <div className="bf-page-header">
         <div>
-          <div className="section-title">Release Funds</div>
-          <div className="section-subtitle">Authority-only smart contract transfer to contractor wallet</div>
+          <h1 className="bf-page-title">Disburse Escrow Funds On-Chain</h1>
+          <p className="bf-page-subtitle">
+            Trigger irreversible cryptographic transfers from smart contract treasury directly to verified contractor addresses.
+          </p>
         </div>
       </div>
 
-      <div className="explain-grid">
-        <ExplainPanel
-          title="Demo Wallet Simulation"
-          subtitle="Blockchain-like training flow"
-          tone="accent"
-          steps={[
-            'Sign a simulated release transaction from this page.',
-            'System shows wallet -> pending -> confirming -> success lifecycle.',
-            'UI preflight checks accepted request + amount before transaction broadcast.',
-          ]}
-        />
-        <ExplainPanel
-          title="Validation Rules"
-          subtitle="Same guardrails as real contract flow"
-          tone="orange"
-          steps={[
-            'Project and amount are validated before state update.',
-            'Release is blocked until there is an accepted funding request.',
-            'On success, release is synced to timeline/checklist and tx proof card.',
-          ]}
-        />
-      </div>
-
-      <div className="release-grid">
-        <div className="form-card" style={{ maxWidth: '100%' }}>
-          {apiUnavailable && (
-            <div className="release-api-warning">
-              API / blockchain service is unreachable. Start backend, MongoDB, and Ganache, then retry.
-            </div>
-          )}
-          <form onSubmit={handleSubmit}>
-            <div className="form-group">
-              <label className="form-label">Select Project *</label>
+      <div className="bf-form-layout-split">
+        {/* Left: Release Execution Form */}
+        <div className="bf-card bf-form-main-card">
+          <form onSubmit={handleRelease} className="bf-form">
+            <div className="bf-input-group">
+              <label className="bf-label">Target Infrastructure Project *</label>
               <select
-                className="form-select"
+                className="bf-select"
                 value={form.projectId}
-                onChange={(event) => {
-                  setResult(null);
-                  setDemoTx((prev) => ({ ...prev, error: '' }));
-                  setForm((prev) => ({ ...prev, projectId: event.target.value }));
-                }}
+                onChange={(e) => setForm({ ...form, projectId: e.target.value })}
+                required
               >
-                <option value="">- Select Project -</option>
-                {projects.map((project) => (
-                  <option key={project.projectId} value={project.projectId}>
-                    {project.name}
+                <option value="">Select an active project...</option>
+                {projects.map((p) => (
+                  <option key={p.projectId} value={p.projectId}>
+                    {p.name} — Remaining Escrow: {formatINR(Math.max(0, p.totalFund - (p.releasedFund || 0)))}
                   </option>
                 ))}
               </select>
             </div>
 
             {selectedProject && (
-              <div
-                style={{
-                  background: 'var(--bg-elevated)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  padding: '12px 14px',
-                  marginBottom: 16,
-                }}
-              >
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 8, letterSpacing: 1 }}>
-                  PROJECT FUND STATUS
+              <div className="bf-escrow-summary-box">
+                <div className="bf-escrow-row">
+                  <span>Total Escrow Allocation:</span>
+                  <strong>{formatINR(totalFund)}</strong>
                 </div>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr 1fr',
-                    gap: 10,
-                    fontSize: 11,
-                    textAlign: 'center',
-                  }}
-                >
-                  <div>
-                    <div style={{ color: 'var(--text-muted)', fontSize: 9, marginBottom: 2 }}>TOTAL</div>
-                    <div style={{ color: 'var(--accent)', fontWeight: 700 }}>
-                      {formatINR(selectedProject.totalFund)}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ color: 'var(--text-muted)', fontSize: 9, marginBottom: 2 }}>RELEASED</div>
-                    <div style={{ color: 'var(--orange)', fontWeight: 700 }}>{formatINR(released)}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: 'var(--text-muted)', fontSize: 9, marginBottom: 2 }}>REMAINING</div>
-                    <div style={{ color: 'var(--green)', fontWeight: 700 }}>{formatINR(remaining)}</div>
-                  </div>
+                <div className="bf-escrow-row">
+                  <span>Previously Disbursed:</span>
+                  <span className="text-blue font-semibold">{formatINR(releasedFund)}</span>
                 </div>
-                <div className="fund-bar-track" style={{ marginTop: 10 }}>
-                  <div
-                    className="fund-bar-fill"
-                    style={{ width: `${getPercent(released, selectedProject.totalFund)}%` }}
-                  />
+                <div className="bf-escrow-row">
+                  <span>Remaining Available Escrow:</span>
+                  <span className="text-emerald font-semibold">{formatINR(remainingEscrow)}</span>
+                </div>
+                <div className="bf-escrow-row">
+                  <span>Recipient Contractor:</span>
+                  <strong>{selectedProject.contractor?.name || 'Assigned Firm'}</strong>
+                </div>
+                <div className="bf-escrow-row">
+                  <span>Recipient Wallet:</span>
+                  <span className="font-mono text-blue" style={{ fontSize: 11 }}>
+                    {selectedProject.contractor?.walletAddress || 'No wallet linked'}
+                  </span>
                 </div>
               </div>
             )}
 
-            <div className="form-group">
-              <label className="form-label">Amount to Release (INR) *</label>
+            {/* Quick Fill from Accepted Requests */}
+            {acceptedRequestsForProject.length > 0 && (
+              <div className="bf-quick-fill-accepted-box">
+                <span className="bf-quick-accepted-lbl">Accepted Request Matches:</span>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                  {acceptedRequestsForProject.map((req) => (
+                    <button
+                      key={req._id}
+                      type="button"
+                      className="bf-secondary-btn bf-btn-sm"
+                      onClick={() => setForm({ ...form, amount: String(req.amount) })}
+                    >
+                      Fill {formatINR(req.amount)} ({req.note || 'Milestone'})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="bf-input-group" style={{ marginTop: 14 }}>
+              <label className="bf-label">Disbursement Amount (INR) *</label>
               <input
-                className="form-input"
                 type="number"
+                className="bf-input"
+                placeholder="e.g. 1000000"
                 value={form.amount}
-                onChange={(event) => {
-                  setDemoTx((prev) => ({ ...prev, error: '' }));
-                  setForm((prev) => ({ ...prev, amount: event.target.value }));
-                }}
-                placeholder="Enter amount"
-                min="1"
-                max={remaining > 0 ? remaining : undefined}
+                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                required
               />
-            </div>
-
-            {demoMode && selectedProject && (
-              <div className="release-precheck-card">
-                <div className="release-precheck-title">Release Preflight</div>
-                <div
-                  className={`release-precheck-status ${matchingAcceptedRequest ? 'ok' : 'warn'}`}
-                >
-                  {demoPrecheckMessage}
+              {form.amount && Number(form.amount) > 0 && (
+                <div className="bf-help-text text-blue">
+                  Formatted: {formatINR(Number(form.amount))}
                 </div>
-                {acceptedRequests.length > 0 && (
-                  <div className="release-precheck-actions">
-                    {acceptedRequests.map((requestItem) => (
-                      <button
-                        key={requestItem._id}
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => {
-                          setForm((prev) => ({
-                            ...prev,
-                            amount: String(Number(requestItem.amount)),
-                          }));
-                          setDemoTx((prev) => ({ ...prev, error: '' }));
-                        }}
-                      >
-                        Use {formatINR(Number(requestItem.amount))}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+            </div>
 
             <button
-              className="btn btn-primary"
               type="submit"
-              disabled={submitDisabled}
-              style={{ width: '100%', justifyContent: 'center' }}
+              className="bf-primary-btn bf-btn-lg"
+              style={{ marginTop: 16 }}
+              disabled={loading || !selectedProject?.contractor?.walletAddress}
             >
-              {txButtonLabel(demoMode, loading, demoTx.phase, demoPrecheckReady)}
+              <span>{loading ? 'Processing Blockchain Transfer...' : 'Execute On-Chain Fund Release'}</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <rect x="2" y="5" width="20" height="14" rx="2" />
+                <line x1="2" y1="10" x2="22" y2="10" />
+              </svg>
             </button>
           </form>
-          {demoMode && (
-            <div className="release-demo-note">
-              Demo mode keeps blockchain semantics: transaction UI is simulated, while release state mutation stays real.
-            </div>
-          )}
-
-          {demoMode && (
-            <div className="tx-sim-card">
-              <div className="tx-sim-title">Demo Transaction Lifecycle</div>
-              <div className="tx-sim-subtitle">{demoTx.message}</div>
-              <div className="tx-sim-steps">
-                <div className={`tx-sim-step ${stepStatus(demoTx.phase, 'wallet')}`}>1. Wallet Signature</div>
-                <div className={`tx-sim-step ${stepStatus(demoTx.phase, 'pending')}`}>2. Pending in Mempool</div>
-                <div className={`tx-sim-step ${stepStatus(demoTx.phase, 'confirming')}`}>3. Block Confirmation</div>
-                <div className={`tx-sim-step ${stepStatus(demoTx.phase, 'success')}`}>4. State Commit</div>
-              </div>
-              {demoTx.txHash && (
-                <>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>TRANSACTION HASH</div>
-                  <TxHashDisplay hash={demoTx.txHash} />
-                </>
-              )}
-              {demoTx.explorerUrl && (
-                <div className="tx-sim-link-wrap">
-                  <div className="tx-sim-link">{demoTx.explorerUrl}</div>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(demoTx.explorerUrl);
-                        showToast('Simulated explorer link copied', 'success');
-                      } catch {
-                        showToast('Copy failed', 'error');
-                      }
-                    }}
-                  >
-                    Copy explorer link
-                  </button>
-                </div>
-              )}
-              {demoTx.error && <div className="tx-sim-error">{demoTx.error}</div>}
-            </div>
-          )}
         </div>
 
-        <div>
-          <div className="form-card" style={{ maxWidth: '100%', marginBottom: 16 }}>
-            <div className="form-title" style={{ fontSize: 14, marginBottom: 10 }}>
-              Smart contract flow
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 2 }}>
-              <div>1. Authority submits signed release intent</div>
-              <div>2. API verifies accepted request + project balance before contract call</div>
-              <div>3. Transfer is mined and receipt hash is produced</div>
-              <div>4. Backend syncs MongoDB after confirmation receipt</div>
-            </div>
-          </div>
+        {/* Right: Real-Time Transaction Pipeline Visualizer */}
+        <div className="bf-form-side-column">
+          <div className="bf-card">
+            <h3 className="bf-side-card-title">Transaction Pipeline Visualizer</h3>
+            <p className="bf-side-card-text">
+              Real-time monitoring of Ethereum virtual machine state transitions during fund disbursement.
+            </p>
 
-          {result && (
-            <div className="form-card" style={{ maxWidth: '100%' }}>
-              <div
-                style={{
-                  fontSize: 14,
-                  fontFamily: 'var(--font-display)',
-                  fontWeight: 700,
-                  color: 'var(--green)',
-                  marginBottom: 6,
-                }}
-              >
-                {demoMode ? 'Demo transaction finalized' : 'Funds released and synced'}
+            <div className="bf-tx-pipeline">
+              <div className={`bf-pipeline-step ${stepStatus(txPhase, 'wallet')}`}>
+                <div className="bf-step-bubble">1</div>
+                <div>
+                  <strong>Awaiting Wallet Signature</strong>
+                  <div className="bf-step-sub">Validating authority private key on Ganache</div>
+                </div>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 10 }}>
-                {result.message || 'Release transaction completed successfully.'}
+
+              <div className={`bf-pipeline-step ${stepStatus(txPhase, 'pending')}`}>
+                <div className="bf-step-bubble">2</div>
+                <div>
+                  <strong>Mempool Broadcast</strong>
+                  <div className="bf-step-sub">Transaction pending in local miner pool</div>
+                </div>
               </div>
-              {result.blockchain?.txHash && (
-                <>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>
-                    TRANSACTION HASH
-                  </div>
-                  <TxHashDisplay hash={result.blockchain.txHash} />
-                </>
-              )}
+
+              <div className={`bf-pipeline-step ${stepStatus(txPhase, 'confirming')}`}>
+                <div className="bf-step-bubble">3</div>
+                <div>
+                  <strong>Block Confirmation</strong>
+                  <div className="bf-step-sub">Executing releaseFunds() opcode in smart contract</div>
+                </div>
+              </div>
+
+              <div className={`bf-pipeline-step ${stepStatus(txPhase, 'success')}`}>
+                <div className="bf-step-bubble">4</div>
+                <div>
+                  <strong>Funds Committed On-Chain</strong>
+                  <div className="bf-step-sub">Contractor balance updated & receipt sealed</div>
+                </div>
+              </div>
             </div>
-          )}
+
+            {txHash && (
+              <div className="bf-pipeline-result-box">
+                <span className="text-emerald font-semibold">✓ Transfer Confirmed</span>
+                <div style={{ marginTop: 8 }}>
+                  <TxHashDisplay hash={txHash} label="Receipt Tx Hash" />
+                </div>
+              </div>
+            )}
+
+            {txError && (
+              <div className="bf-pipeline-error-box">
+                <strong>Transaction Reverted:</strong>
+                <p style={{ fontSize: 12, marginTop: 4 }}>{txError}</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

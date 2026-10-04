@@ -28,6 +28,17 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    companyName: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    email: {
+      type: String,
+      default: null,
+      trim: true,
+      lowercase: true,
+    },
   },
   { timestamps: true }
 );
@@ -35,5 +46,7 @@ const userSchema = new mongoose.Schema(
 userSchema.methods.comparePassword = function comparePassword(password) {
   return bcrypt.compare(password, this.passwordHash);
 };
+
+userSchema.index({ email: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('User', userSchema);

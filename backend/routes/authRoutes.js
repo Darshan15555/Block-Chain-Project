@@ -15,6 +15,8 @@ function sanitizeUser(user) {
     username: user.username,
     role: user.role,
     walletAddress: user.walletAddress || null,
+    companyName: user.companyName || '',
+    email: user.email || null,
   };
 }
 
@@ -48,7 +50,7 @@ router.get('/wallet-options', async (_req, res) => {
 
 router.post('/signup', async (req, res) => {
   try {
-    const { name, username, password, role, walletAddress } = req.body;
+    const { name, username, password, role, walletAddress, companyName, email } = req.body;
     const normalizedRole = String(role || '').trim().toLowerCase();
     const normalizedUsername = String(username || '').trim().toLowerCase();
 
@@ -91,6 +93,8 @@ router.post('/signup', async (req, res) => {
       passwordHash,
       role: normalizedRole,
       walletAddress: normalizedWallet || null,
+      companyName: normalizedRole === 'contractor' ? String(companyName || name || '').trim() : '',
+      email: email ? String(email).trim().toLowerCase() : null,
     });
 
     const token = signToken(user);
@@ -110,18 +114,21 @@ router.post('/signup', async (req, res) => {
 
 router.post('/login', async (req, res) => {
   try {
-    const { username, password, role } = req.body;
-    const normalizedRole = String(role || '').trim().toLowerCase();
+    const { email, username, password, role } = req.body;
+    const identifier = String(email || username || '').trim().toLowerCase();
 
-    if (!username || !password || !normalizedRole) {
-      return res.status(400).json({ success: false, error: 'Username, password and role are required' });
+    if (!identifier || !password) {
+      return res.status(400).json({ success: false, error: 'Email/username and password are required' });
     }
 
-    if (!ALLOWED_ROLES.includes(normalizedRole)) {
+    const normalizedRole = role ? String(role).trim().toLowerCase() : null;
+    if (normalizedRole && !ALLOWED_ROLES.includes(normalizedRole)) {
       return res.status(400).json({ success: false, error: 'Invalid role selection' });
     }
 
-    const user = await User.findOne({ username: String(username).trim().toLowerCase() });
+    const user = await User.findOne({
+      $or: [{ email: identifier }, { username: identifier }],
+    });
     if (!user) {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
@@ -131,7 +138,7 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
-    if (user.role !== normalizedRole) {
+    if (normalizedRole && user.role !== normalizedRole) {
       return res.status(403).json({
         success: false,
         error: 'Role mismatch. Select the same role you signed up with.',
@@ -150,16 +157,42 @@ router.post('/login', async (req, res) => {
   }
 });
 
+router.post('/public-viewer', async (_req, res) => {
+  try {
+    let user = await User.findOne({ username: 'public_user' });
+    if (!user) {
+      user = await User.findOne({ role: 'public' });
+    }
+    if (!user) {
+      const passwordHash = await bcrypt.hash('Public@123', 10);
+      user = await User.create({
+        name: 'Public Viewer',
+        username: 'public_user',
+        email: 'citizen@public.org',
+        passwordHash,
+        role: 'public',
+      });
+    }
+
+    const token = signToken(user);
+    return res.json({
+      success: true,
+      token,
+      user: sanitizeUser(user),
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/me', authenticateToken, async (req, res) => {
+  const fullUser = await User.findById(req.user.id).select('_id name username role walletAddress companyName email');
+  if (!fullUser) {
+    return res.status(401).json({ success: false, error: 'User not found' });
+  }
   return res.json({
     success: true,
-    user: {
-      id: req.user.id,
-      name: req.user.name,
-      username: req.user.username,
-      role: req.user.role,
-      walletAddress: req.user.walletAddress || null,
-    },
+    user: sanitizeUser(fullUser),
   });
 });
 

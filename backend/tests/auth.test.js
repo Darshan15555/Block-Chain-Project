@@ -88,6 +88,43 @@ describe('Auth Routes', () => {
     expect(res.body.user.role).toBe('authority');
   });
 
+  test('POST /api/auth/login supports email and password without role', async () => {
+    User.findOne.mockResolvedValue({
+      _id: '507f1f77bcf86cd799439011',
+      name: 'Central Authority',
+      username: 'authority_admin',
+      email: 'authority@blockfund.gov',
+      role: 'authority',
+      walletAddress: '0x123',
+      comparePassword: jest.fn().mockResolvedValue(true),
+    });
+
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'authority@blockfund.gov', password: 'Authority@123' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.token).toBeTruthy();
+    expect(res.body.user.role).toBe('authority');
+  });
+
+  test('POST /api/auth/public-viewer returns public access token', async () => {
+    User.findOne.mockResolvedValue({
+      _id: '507f1f77bcf86cd799439098',
+      name: 'Public Viewer',
+      username: 'public_user',
+      role: 'public',
+      walletAddress: null,
+    });
+
+    const res = await request(app).post('/api/auth/public-viewer');
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.token).toBeTruthy();
+    expect(res.body.user.role).toBe('public');
+  });
+
   test('POST /api/auth/signup creates account', async () => {
     User.findOne.mockResolvedValue(null);
     User.create.mockResolvedValue({

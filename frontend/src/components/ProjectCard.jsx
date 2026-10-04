@@ -1,109 +1,98 @@
 import { formatINR, shortHash, getPercent, formatDate } from '../utils/api';
-
-const TYPE_CLASS = {
-  'Road': 'type-road',
-  'School': 'type-school',
-  'Water Facility': 'type-water',
-  'Bridge': 'type-bridge',
-  'Hospital': 'type-road',
-  'Other': 'type-other',
-};
-
-const STATUS_CLASS = {
-  Active: 'status-active',
-  Pending: 'status-pending',
-  Completed: 'status-completed',
-  Suspended: 'status-suspended',
-};
+import StatusBadge from './ui/StatusBadge';
 
 export default function ProjectCard({ project, onVerify, showVerify = false, onViewDetails }) {
   const pct = getPercent(project.spentFund, project.totalFund);
-  const isDanger = pct > 80;
+  const releasedFund = Number(project.releasedFund || 0);
 
   return (
-    <div className="project-card">
-      <div className="project-card-header">
-        <span className={`project-type-badge ${TYPE_CLASS[project.type] || 'type-other'}`}>
-          {project.type || 'Project'}
+    <div className="bf-card bf-interactive-card">
+      <div className="bf-card-header-bar">
+        <span className={`project-type-badge type-${project.type?.toLowerCase().replace(/\s+/g, '')}`}>
+          {project.type || 'Infrastructure'}
         </span>
-        <span className={`status-badge ${STATUS_CLASS[project.status] || 'status-active'}`}>
-          {project.status}
-        </span>
+        <StatusBadge status={project.status || 'Active'} size="sm" />
       </div>
 
-      <div className="project-name">{project.name}</div>
-      <div className="project-location">📍 {project.location}</div>
+      <h3 className="bf-project-card-name">{project.name}</h3>
+      <div className="bf-project-card-loc">📍 {project.location}</div>
+
+      <div className="bf-card-funds-split">
+        <div>
+          <span className="bf-mini-lbl">TOTAL ALLOCATED</span>
+          <span className="bf-mini-val font-semibold">{formatINR(project.totalFund)}</span>
+        </div>
+        <div>
+          <span className="bf-mini-lbl">RELEASED</span>
+          <span className="bf-mini-val text-blue font-semibold">{formatINR(releasedFund)}</span>
+        </div>
+      </div>
 
       <div className="fund-bar-container">
         <div className="fund-bar-label">
-          <span>Spent: {formatINR(project.spentFund)}</span>
-          <span>{pct}%</span>
+          <span>Budget Spent: {formatINR(project.spentFund)}</span>
+          <span className="font-semibold">{pct}%</span>
         </div>
         <div className="fund-bar-track">
           <div
-            className={`fund-bar-fill ${isDanger ? 'danger' : ''}`}
+            className={`fund-bar-fill ${pct > 85 ? 'danger' : ''}`}
             style={{ width: `${pct}%` }}
           />
         </div>
-        <div className="fund-bar-label" style={{ marginTop: 4 }}>
-          <span>Total: {formatINR(project.totalFund)}</span>
-          <span>Remaining: {formatINR(project.totalFund - project.spentFund)}</span>
+      </div>
+
+      <div className="bf-project-card-meta">
+        <div>
+          <span className="bf-meta-micro-lbl">Contractor:</span>
+          <span className="bf-meta-micro-val">{project.contractor?.name || 'Vetted Firm'}</span>
+        </div>
+        <div>
+          <span className="bf-meta-micro-lbl">Public Audit:</span>
+          <span className="bf-meta-micro-val text-emerald">
+            ✓ {project.verificationCount?.workDone || 0} Confirmed
+          </span>
         </div>
       </div>
 
-      <div className="project-meta">
-        <div className="meta-item">
-          <div className="meta-label">Contractor</div>
-          <div className="meta-value" style={{ fontSize: 11 }}>{project.contractor?.name || '—'}</div>
+      {project.blockchainTxHash ? (
+        <div className="bf-chain-proof-pill">
+          <span className="bf-chain-dot active" />
+          <span>Tx: {shortHash(project.blockchainTxHash)}</span>
         </div>
-        <div className="meta-item">
-          <div className="meta-label">Project ID</div>
-          <div className="meta-value" style={{ fontSize: 10, color: 'var(--text-muted)' }}>{project.projectId}</div>
-        </div>
-        <div className="meta-item">
-          <div className="meta-label">Created</div>
-          <div className="meta-value">{formatDate(project.createdAt)}</div>
-        </div>
-        <div className="meta-item">
-          <div className="meta-label">Verifications</div>
-          <div className="meta-value">
-            <span style={{ color: 'var(--green)' }}>✓ {project.verificationCount?.workDone || 0}</span>
-            {' / '}
-            <span style={{ color: 'var(--red)' }}>✗ {project.verificationCount?.notDone || 0}</span>
-          </div>
-        </div>
-      </div>
-
-      {project.blockchainTxHash && (
-        <div className="blockchain-badge">
-          ⛓ On-chain: {shortHash(project.blockchainTxHash)}
+      ) : (
+        <div className="bf-chain-proof-pill pending">
+          <span className="bf-chain-dot" />
+          <span>Local Ganache Sync Pending</span>
         </div>
       )}
 
-      {!project.blockchainTxHash && (
-        <div className="blockchain-badge pending">
-          ⚠ Blockchain pending (configure Ganache)
-        </div>
-      )}
-
-      {showVerify && (
-        <div className="verify-btns">
-          <button className="verify-btn verify-done" onClick={() => onVerify(project.projectId, 'Work Done')}>
+      {showVerify && onVerify && (
+        <div className="bf-verify-btn-group">
+          <button
+            type="button"
+            className="bf-verify-btn done"
+            onClick={() => onVerify(project.projectId, 'Work Done')}
+          >
             ✓ Work Done
           </button>
-          <button className="verify-btn verify-notdone" onClick={() => onVerify(project.projectId, 'Not Done')}>
-            ✗ Not Done
+          <button
+            type="button"
+            className="bf-verify-btn not-done"
+            onClick={() => onVerify(project.projectId, 'Not Done')}
+          >
+            ✕ Issue Reported
           </button>
         </div>
       )}
 
       {onViewDetails && (
         <button
-          className="btn btn-ghost btn-sm"
-          style={{ width: '100%', marginTop: 12, justifyContent: 'center' }}
+          type="button"
+          className="bf-secondary-btn bf-btn-sm"
+          style={{ width: '100%', marginTop: 12 }}
           onClick={() => onViewDetails(project)}
         >
-          View Details →
+          Inspect Project Details →
         </button>
       )}
     </div>

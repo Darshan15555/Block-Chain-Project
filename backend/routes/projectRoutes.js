@@ -25,6 +25,7 @@ const {
   initWeb3,
 } = require('../middleware/web3Service');
 const { resetDemoData } = require('../services/demoResetService');
+const { photoUploadMiddleware, hashFile } = require('../middleware/upload');
 
 const router = express.Router();
 
@@ -664,7 +665,7 @@ router.get('/blockchain/audit', async (req, res) => {
 router.get('/users/contractors', requireRoles('authority'), async (req, res) => {
   try {
     const contractors = await User.find({ role: 'contractor' })
-      .select('_id name username walletAddress')
+      .select('_id name username walletAddress companyName email createdAt')
       .sort({ name: 1 });
 
     res.json({
@@ -674,12 +675,70 @@ router.get('/users/contractors', requireRoles('authority'), async (req, res) => 
         name: contractor.name,
         username: contractor.username,
         address: contractor.walletAddress,
+        companyName: contractor.companyName || '',
+        email: contractor.email || null,
+        createdAt: contractor.createdAt,
       })),
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+router.post('/users/contractors/invite', requireRoles('authority'), async (req, res) => {
+  try {
+    const { name, username, walletAddress, companyName, email } = req.body;
+    const normalizedUsername = String(username || '').trim().toLowerCase();
+
+    if (!name || !normalizedUsername) {
+      return res.status(400).json({ success: false, error: 'Name and username are required' });
+    }
+
+    if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(String(walletAddress).trim())) {
+      return res.status(400).json({ success: false, error: 'Valid wallet address is required for contractor' });
+    }
+
+    const existing = await User.findOne({ username: normalizedUsername });
+    if (existing) {
+      return res.status(409).json({ success: false, error: 'Username already exists' });
+    }
+
+    // Generate a temporary password the authority can share with the contractor
+    const tempPassword = `Temp@${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
+    const bcrypt = require('bcryptjs');
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+
+    const contractor = await User.create({
+      name: String(name).trim(),
+      username: normalizedUsername,
+      passwordHash,
+      role: 'contractor',
+      walletAddress: String(walletAddress).trim(),
+      companyName: String(companyName || name || '').trim(),
+      email: email ? String(email).trim().toLowerCase() : null,
+    });
+
+    return res.status(201).json({
+      success: true,
+      contractor: {
+        id: contractor._id.toString(),
+        name: contractor.name,
+        username: contractor.username,
+        address: contractor.walletAddress,
+        companyName: contractor.companyName || '',
+        email: contractor.email || null,
+      },
+      tempPassword,
+      message: `Contractor "${contractor.name}" created. Share temp password with them.`,
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ success: false, error: 'Username or email already exists' });
+    }
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 
 router.post('/contract-requests', requireRoles('authority'), async (req, res) => {
   try {
@@ -1012,9 +1071,9 @@ router.post('/contract-requests/:requestId/release', requireRoles('authority'), 
   }
 });
 
-router.post('/createProject', requireRoles('authority'), async (req, res) => {
+router.post('/createProject', requireRoles('authority'), photoUploadMiddleware, async (req, res) => {
   try {
-    const { name, type, location, totalFund, contractorId } = req.body;
+    const { name, type, location, totalFund, contractorId, description } = req.body;
 
     if (!name || !location || !totalFund || !contractorId) {
       return res.status(400).json({ success: false, error: 'Missing required fields' });
@@ -1033,6 +1092,13 @@ router.post('/createProject', requireRoles('authority'), async (req, res) => {
       return res.status(400).json({ success: false, error: 'Valid contractor with wallet address is required' });
     }
 
+    let projectImagePath = null;
+    if (req.file) {
+      projectImagePath = `/uploads/${req.file.filename}`;
+    } else if (req.body.imagePath) {
+      projectImagePath = req.body.imagePath;
+    }
+
     const projectId = generateProjectId();
     const blockchainResult = await createProjectOnChain(projectId, contractor.walletAddress, toWei(numericTotalFund));
 
@@ -1049,6 +1115,8 @@ router.post('/createProject', requireRoles('authority'), async (req, res) => {
         name,
         type: type || 'Other',
         location,
+        description: description || '',
+        imagePath: projectImagePath,
         totalFund: numericTotalFund,
         releasedFund: 0,
         spentFund: 0,
@@ -1198,7 +1266,7 @@ router.patch('/projects/:projectId/status', requireRoles('authority'), async (re
   }
 });
 
-router.post('/updateWork', requireRoles('contractor'), async (req, res) => {
+router.post('/updateWork', requireRoles('contractor'), photoUploadMiddleware, async (req, res) => {
   try {
     const { projectId, date, workDescription, materialsUsed, workersCount, amountSpent } = req.body;
 
@@ -1262,6 +1330,16 @@ router.post('/updateWork', requireRoles('contractor'), async (req, res) => {
       submittedBy: req.user.name,
       timestamp: Date.now(),
     };
+
+    // Include photo hash in data hash if a photo was uploaded
+    let photoHash = null;
+    let photoPath = null;
+    if (req.file) {
+      photoHash = await hashFile(req.file.path);
+      photoPath = `/uploads/${req.file.filename}`;
+      updateData.photoHash = photoHash;
+    }
+
     const dataHash = hashData(updateData);
 
     const blockchainResult = await logExpenseOnChain(projectId, toWei(numericAmount), dataHash);
@@ -1287,6 +1365,8 @@ router.post('/updateWork', requireRoles('contractor'), async (req, res) => {
         blockNumber: blockchainResult.blockNumber || null,
         dataHash: blockchainResult.dataHash,
         blockchainStatus: 'confirmed',
+        photoPath: photoPath || null,
+        photoHash: photoHash || null,
       });
 
       await Project.updateOne(
